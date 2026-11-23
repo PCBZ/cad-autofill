@@ -5,6 +5,8 @@ AI extraction, a generated invoice-lines Excel import, and RPA that types the
 shipment header into the Candata Global Windows client. A licensed broker
 reviews and submits every CAD; the program always stops before submission.
 
+Design: [docs/design.md](docs/design.md) ([中文](docs/design.zh.md))
+
 ## Accounts and API keys
 
 Step 0 below needs none of these. They are needed from M1 (extraction) on.

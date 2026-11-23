@@ -1,153 +1,157 @@
-# Candata CAD 自动录入系统设计
+# Candata CAD Autofill: System Design
 
-Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排）
+English | [中文](design.zh.md)
 
-## 背景与目标
+Nov 21, 2026 · Wenshuang (Nov 22 update: the AI part is now orchestrated with CrewAI)
 
-系统把 B/L、商业发票（CI）和 EMF 三份清关资料交给 AI 识别，由程序模拟鼠标键盘填入 Candata Global Windows 客户端，产品明细通过 Excel 导入，最后由报关员复核并提交 CAD。AI 部分用 CrewAI 编排：Flow 管固定流程，Crew 只负责抽取和校验失败后的排查。
+> This English version is the source of truth. When the design changes, update this file first, then bring the Chinese version in line.
 
-采用这条路线的原因：
+## Background and goals
 
-- Candata 没有对我们开放 API，只能通过界面操作写入。
-- Candata 支持发票明细的 Excel/CSV 导入，产品行不必逐行模拟录入。
-- Candata 自带的 AI 发票识别效果不理想，且只覆盖商业发票，不处理 B/L 和 EMF。
+The system gives the three customs documents for a shipment, the bill of lading (B/L), the commercial invoice (CI) and the EMF, to AI for extraction. A program then fills the Candata Global Windows client by simulating mouse and keyboard input, imports the invoice lines from an Excel file, and leaves the CAD for a broker to review and submit. The AI part is orchestrated with CrewAI: a Flow runs the fixed sequence of steps, and Crews handle only extraction and the investigation of validation failures.
 
-范围之外：程序不自动提交 CAD，不修正 HS 编码，不建产品库，不使用 Candata 的 Shipment Workbook Import。
+Why this approach:
 
-## 整体流程
+- Candata does not offer us an API. The only way to write data is through its user interface.
+- Candata supports importing invoice lines from Excel/CSV, so product lines do not have to be typed one by one.
+- Candata's built-in AI invoice recognition does not work well, and it covers only the commercial invoice, not the B/L or EMF.
 
-一票货从拿到资料到提交前，经过五个步骤，只有第 5 步需要人工。
+Out of scope: the program does not submit CADs, does not correct HS codes, does not build a product library, and does not use Candata's Shipment Workbook Import.
 
-1. **AI 分析识别**：三份 PDF 先用 pymupdf 读出文字层（扫描件转人工或走本地 OCR 备选），再交给抽取 Crew：B/L、CI、EMF 三个专员各读一份单据，核对员汇总成一份结构化 JSON，分表头和产品明细两部分。程序做交叉校验，不通过时由排查 Crew 带工具复查；校验通过后，再由 Jev 核对单据类型、HS 编码和计量单位。
-2. **生成产品 Excel**：明细部分按 Candata 发票明细导入模板生成 xlsx，HS 编码照发票原样。
-3. **模拟操作填表**：程序打开 Candata 的 shipment 界面，用真实的鼠标点击和键盘输入逐个填写表头字段。
-4. **导入产品**：程序点击导入按钮，在文件对话框里填入第 2 步生成的 Excel 路径，完成导入。
-5. **人工复核**：程序停在提交前并截图存档，报关员检查、修改 HS 编码等字段，确认后自己提交。
+## Overall flow
 
-抽取结果校验失败时，先交给排查 Crew；排查后仍不通过，或者其他任何一步出错，程序都会停下来提示，不会继续往下执行。
+A shipment goes through five steps from receiving the documents to just before submission. Only step 5 needs a person.
 
-## 模块设计
+1. **AI extraction**: pymupdf reads the text layer of the three PDFs (scanned PDFs go to manual handling, or to an optional local OCR fallback). The extraction crew then takes over: B/L, CI and EMF specialists each read one document, and a reconciler merges their output into one structured JSON with a header part and an invoice-lines part. Code cross-checks the result. If the check fails, the investigation crew re-examines the documents with tools. After validation passes, Jev checks the document types, HS codes and units of measure.
+2. **Generate the product Excel**: the lines part is written as an xlsx in Candata's invoice-lines import template. HS codes are copied exactly as they appear on the invoice.
+3. **Fill the form**: the program opens the shipment screen in Candata and fills each header field with real mouse clicks and keystrokes.
+4. **Import products**: the program clicks the import button, enters the path of the Excel file from step 2 in the file dialog, and completes the import.
+5. **Human review**: the program stops before submission and saves screenshots. The broker checks the entry, edits fields such as HS codes, and submits it themselves.
 
-系统分七个模块，前四个与 Candata 无关，可以在任何电脑上开发测试；后三个必须在装有 Candata 的 Windows 电脑上运行。前四个由 CrewAI Flow 串起来（见下面"CrewAI 编排"），后三个是普通代码，不使用 CrewAI。
+If extraction fails validation, the investigation crew runs first. If validation still fails after investigation, or any other step goes wrong, the program stops and reports the problem. It never carries on to the next step.
 
-| 模块 | 输入 | 输出 | 关键点 |
+## Module design
+
+The system has seven modules. The first four do not depend on Candata and can be developed and tested on any computer. The last three must run on the Windows computer where Candata is installed. The first four are chained by a CrewAI Flow (see "CrewAI orchestration" below). The last three are plain code and do not use CrewAI.
+
+| Module | Input | Output | Key points |
 | --- | --- | --- | --- |
-| extraction crew 抽取 | 三份 PDF | shipment JSON | pymupdf 读 PDF 文字层，用 find_tables() 保留发票表格行列；B/L、CI、EMF 三个专员 agent 并行抽取，核对员 agent 汇总，默认用 Claude Haiku 5.5 或 GPT-6 Luna；每个任务用 output_pydantic 约束输出、guardrail 检查格式；每个字段记录来源单据 |
-| validator 校验 | shipment JSON | 校验报告 | 纯代码。明细金额合计 = 发票总额；提单号、件数、毛重、收货人在三份单据间一致 |
-| investigation crew 排查 | shipment JSON + 校验报告 + 单据文字 | 修正后的 JSON + 排查记录 | 只在校验失败时运行，用 Claude Sonnet 5.5；带重读页面、重读表格、重算合计三个只读工具；每处修正写明依据，复核时标出 |
-| excel_writer 生成 Excel | 明细部分 | 导入用 xlsx | 列顺序和格式按 Candata 模板，由 YAML 配置 |
-| rpa_filler 填表 | 表头部分 | 已填好的 shipment 界面 | pywinauto 定位控件，`click_input()` + `type_keys()` 模拟真人；每个字段填完回读核对 |
-| rpa_importer 导入 | xlsx 路径 | 已导入的产品行 | 点击导入按钮，在文件对话框填路径；导入后核对行数 |
-| reviewer 复核留痕 | 全部结果 | 截图 + 日志 | 停在提交前，由报关员确认 |
+| extraction crew | Three PDFs | Shipment JSON | pymupdf reads the PDF text layer; `find_tables()` keeps the rows and columns of invoice tables. B/L, CI and EMF specialist agents extract in parallel and a reconciler agent merges, by default on Claude Haiku 5.5 or GPT-6 Luna. Every task constrains its output with `output_pydantic` and checks format with a `guardrail`. Every field records its source document |
+| validator | Shipment JSON | Validation report | Plain code. Sum of line amounts = invoice total; B/L number, packages, gross weight and consignee agree across the three documents |
+| investigation crew | Shipment JSON + validation report + document text | Corrected JSON + investigation record | Runs only when validation fails, on Claude Sonnet 5.5. Has three read-only tools: reread a page, reread a table, recompute totals. Every correction states its evidence and is highlighted at review |
+| excel_writer | Lines part | Import xlsx | Column order and formats follow the Candata template, configured in YAML |
+| rpa_filler | Header part | Filled shipment screen | pywinauto locates controls; `click_input()` + `type_keys()` act like a real user; every field is read back after typing |
+| rpa_importer | xlsx path | Imported product lines | Clicks the import button and enters the path in the file dialog; checks the row count after import |
+| reviewer | All results | Screenshots + log | Stops before submission for the broker to confirm |
 
-填表方式按可靠性从高到低有三层，程序优先用第一层：
+There are three ways to fill a field, from most to least reliable. The program uses the first one whenever it can:
 
-1. 按控件名定位（pywinauto UIA 或 win32 backend），再用真实鼠标点击和键盘输入。
-2. 控件识别不到时，从已知字段出发按 Tab 顺序导航。
-3. 最后才用屏幕坐标或图像识别（pyautogui），换分辨率或挪窗口就会失效。
+1. Locate the control by name (pywinauto UIA or win32 backend), then use real mouse clicks and keystrokes.
+2. If the control cannot be found, navigate by Tab order from a known field.
+3. Only as a last resort, use screen coordinates or image matching (pyautogui). This breaks when the resolution changes or the window moves.
 
-下拉框和自动补全框（国家代码、口岸代码、币种）单独处理：输入后等待候选列表出现，选中精确匹配项，而不是直接回车。
+Drop-downs and autocomplete fields (country codes, port codes, currency) are handled separately: type the value, wait for the candidate list to appear, and select the exact match instead of just pressing Enter.
 
-### CrewAI 编排
+### CrewAI orchestration
 
-流程顺序是固定的，所以用 Flow 串起来；只有抽取和排查两处需要模型判断，才用 Crew。填表和导入（RPA）不进 Flow，也不做成任何 agent 的工具：不能让模型决定点不点鼠标、点几次。
+The order of steps is fixed, so a Flow chains them. Only extraction and investigation need model judgment, so only those two use Crews. Form filling and import (RPA) are not part of the Flow and are not exposed as a tool to any agent: a model must never decide whether or how many times to click.
 
 ```
-load_texts → extract（抽取 Crew）→ validate ─ 通过 ─→ classify（Jev）→ write_excel → 结束
-                                             └ 不通过 → investigate（排查 Crew）→ revalidate ─ 通过 ─→ classify …
-                                                                                              └ 不通过 → 停止，转人工
+load_texts → extract (extraction crew) → validate ─ passed ─→ classify (Jev) → write_excel → end
+                                                  └ failed → investigate (investigation crew) → revalidate ─ passed ─→ classify …
+                                                                                                           └ failed → stop, hand to a person
 ```
 
-| Flow 步骤 | 写法 | 说明 |
+| Flow step | Implemented as | Notes |
 | --- | --- | --- |
-| load_texts | `@start()`，代码 | pymupdf 读三份 PDF；文字过少判为扫描件，停止转人工 |
-| extract | `@listen`，抽取 Crew | 输出 shipment JSON |
-| validate | `@router`，代码 | 返回 `passed` 或 `failed` |
-| investigate | `@listen("failed")`，排查 Crew | 输出修正和排查记录 |
-| revalidate | `@router`，代码 | 通过进入 classify；不通过停止 |
-| classify | `@listen(or_(...))`，代码 | 调 Jev，不经过 agent |
-| write_excel | `@listen`，代码 | 写 xlsx、校验报告、排查记录 |
+| load_texts | `@start()`, code | pymupdf reads the three PDFs; too little text means a scanned PDF, so stop and hand to a person |
+| extract | `@listen`, extraction crew | Outputs the shipment JSON |
+| validate | `@router`, code | Returns `passed` or `failed` |
+| investigate | `@listen("failed")`, investigation crew | Outputs corrections and an investigation record |
+| revalidate | `@router`, code | Passed goes to classify; failed stops |
+| classify | `@listen(or_(...))`, code | Calls Jev directly, not through an agent |
+| write_excel | `@listen`, code | Writes the xlsx, validation report and investigation record |
 
-- Flow 的状态是一个 pydantic 模型（`ShipmentFlow(Flow[ShipmentState])`），装 shipment JSON、校验报告和排查记录；每票结束写到 `output/<票号>/`。
-- 不用 `@persist`：两台电脑之间靠 JSON 文件交接；一票抽取只需几十秒，失败了整段重跑即可。
+- The Flow state is a pydantic model (`ShipmentFlow(Flow[ShipmentState])`) holding the shipment JSON, the validation report and the investigation record. When a shipment finishes, it is written to `output/<shipment>/`.
+- No `@persist`: the two computers hand off through JSON files, and extracting one shipment takes only tens of seconds, so a failed run is simply rerun from the start.
 
-**抽取 Crew**：按单据分角色，和报关行的实际分工一致。
+**Extraction crew**: roles are split by document, matching how a brokerage actually divides the work.
 
-| Agent | 输入 | 输出 |
+| Agent | Input | Output |
 | --- | --- | --- |
-| B/L 专员 | B/L 文字 | 提单号、收发货人、装卸港、件数与包装、毛重、船名航次、柜号 |
-| CI 专员 | CI 文字和表格 | 发票头（发票号、日期、买卖方、币种、成交条款、总额）和产品明细 |
-| EMF 专员 | EMF 文字 | CCN、承运人代码、入境口岸、ETA，以及供核对的提单号、件数、毛重 |
-| 核对员 | 三个专员的输出 | 合并成一份 shipment JSON；统一同一实体的不同写法（如收货人全称和简称）；列出冲突字段 |
+| B/L specialist | B/L text | B/L number, shipper and consignee, ports of loading and discharge, packages and package type, gross weight, vessel and voyage, container numbers |
+| CI specialist | CI text and tables | Invoice header (invoice number, date, vendor and purchaser, currency, incoterms, total) and invoice lines |
+| EMF specialist | EMF text | CCN, carrier code, port of entry, ETA, plus B/L number, packages and gross weight for cross-checking |
+| Reconciler | Output of the three specialists | Merges into one shipment JSON; normalizes different spellings of the same party (for example a consignee's full and short names); lists conflicting fields |
 
-- 三个专员的任务设 `async_execution=True` 并行，核对员的任务用 `context` 接收它们的输出；process 用 sequential，不需要经理 agent 分派（hierarchical）。
-- 每个任务用 `output_pydantic` 指定 `schema.py` 里的模型；`guardrail` 函数检查必填字段和格式（日期、数字、国家代码），不合格打回重做，重试次数用 `guardrail_max_retries`（默认 3）。
-- 核对员只负责合并和统一写法；金额合计、三单一致这些硬规则由 validator 用代码判断，不交给模型。
+- The three specialist tasks use `async_execution=True` to run in parallel, and the reconciler task receives their output through `context`. The process is sequential; no manager agent (hierarchical process) is needed.
+- Every task uses `output_pydantic` with a model from `schema.py`. A `guardrail` function checks required fields and formats (dates, numbers, country codes) and sends failures back for a retry, up to `guardrail_max_retries` (default 3).
+- The reconciler only merges and normalizes. Hard rules such as the totals check and three-document agreement are checked by the validator in code, not by a model.
 
-**排查 Crew**：一个排查员 agent，用 Claude Sonnet 5.5，只在校验失败时运行。
+**Investigation crew**: a single investigator agent on Claude Sonnet 5.5, run only when validation fails.
 
-| 工具 | 作用 |
+| Tool | Purpose |
 | --- | --- |
-| `read_page_text(doc, page)` | 重读某份单据某一页的原文 |
-| `read_page_tables(doc, page)` | 用 find_tables() 重读某页表格 |
-| `recompute_totals(lines)` | 重算明细合计，与发票总额比对 |
+| `read_page_text(doc, page)` | Reread the text of one page of one document |
+| `read_page_tables(doc, page)` | Reread the tables on a page with `find_tables()` |
+| `recompute_totals(lines)` | Recompute the line total and compare it with the invoice total |
 
-- 输出 `InvestigationResult`：每个校验问题一条，结论是 `corrected`（抽错了，给出修正值）、`document_mismatch`（单据本身不一致）或 `unresolved`，并附依据（单据、页码、原文片段）。
-- 修正由代码写回 JSON 后重新校验；排查修正过的字段在校验报告和复核截图里标出，由报关员确认。
-- 三个工具都是只读的，排查员不能调用填表、导入或任何写操作。
+- Output is an `InvestigationResult` with one entry per validation issue. The result is `corrected` (extraction was wrong; gives the corrected value), `document_mismatch` (the documents themselves disagree) or `unresolved`, with evidence (document, page, quoted text).
+- Code writes corrections back into the JSON and validates again. Fields changed by investigation are highlighted in the validation report and review screenshots for the broker to confirm.
+- All three tools are read-only. The investigator cannot call form filling, import, or any write operation.
 
-**配置**
+**Configuration**
 
-- agent 的 role、goal、backstory 和任务描述放在各 crew 的 `config/agents.yaml`、`config/tasks.yaml`（`crewai create crew <name> --classic` 生成的结构）；每个 agent 用哪个模型写在 `settings.yaml`。
-- 模型用 CrewAI 的 `LLM` 类配置：Anthropic、OpenAI 有原生集成（`crewai[anthropic]`、`crewai[openai]`）；OpenRouter 等其他提供方走 LiteLLM（`crewai[litellm]`，模型名写成 `openrouter/<vendor>/<model>`）。
-- 关闭遥测和 tracing：`.env` 里设 `CREWAI_DISABLE_TELEMETRY=true`、`OTEL_SDK_DISABLED=true`、`CREWAI_TRACING_ENABLED=false`。tracing 记录可能包含提示词和单据内容，不能上传。
+- Each crew keeps its agents' role, goal and backstory and its task descriptions in its own `config/agents.yaml` and `config/tasks.yaml` (the layout generated by `crewai create crew <name> --classic`). The model for each agent is set in `settings.yaml`.
+- Models are configured with CrewAI's `LLM` class. Anthropic and OpenAI have native integrations (`crewai[anthropic]`, `crewai[openai]`). OpenRouter and other providers go through LiteLLM (`crewai[litellm]`, with model names of the form `openrouter/<vendor>/<model>`).
+- Telemetry and tracing are turned off in `.env`: `CREWAI_DISABLE_TELEMETRY=true`, `OTEL_SDK_DISABLED=true`, `CREWAI_TRACING_ENABLED=false`. Traces can contain prompts and document content and must not be uploaded.
 
-来源：[CrewAI Flows](https://docs.crewai.com/en/concepts/flows)、[Tasks](https://docs.crewai.com/en/concepts/tasks)、[LLMs](https://docs.crewai.com/en/concepts/llms)、[Telemetry](https://docs.crewai.com/en/telemetry)、[Tracing](https://docs.crewai.com/en/observability/tracing)、[安装](https://docs.crewai.com/en/installation)
+Sources: [CrewAI Flows](https://docs.crewai.com/en/concepts/flows), [Tasks](https://docs.crewai.com/en/concepts/tasks), [LLMs](https://docs.crewai.com/en/concepts/llms), [Telemetry](https://docs.crewai.com/en/telemetry), [Tracing](https://docs.crewai.com/en/observability/tracing), [Installation](https://docs.crewai.com/en/installation)
 
-### Jev 分类
+### Jev classification
 
-PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断交给 TypeSafe AI 的 Jev：Jev 只接受文本，对预先声明的问题返回带校准置信度的结构化答案，适合在代码里做判断。它在 Flow 的 classify 步骤里，校验通过之后、生成 Excel 之前，由代码直接调用，不经过 agent。
+After pymupdf extracts the text and the extraction crew turns it into JSON, classification is handed to TypeSafe AI's Jev. Jev takes text only and returns structured answers with calibrated confidence to questions declared in advance, which suits decisions made in code. It runs in the Flow's classify step, after validation passes and before the Excel file is generated, and is called directly from code, not through an agent.
 
-| 任务 | Jev 问题 | 输入 | 结果怎么用 |
+| Task | Jev question | Input | How the result is used |
 | --- | --- | --- | --- |
-| 单据类型识别 | Choice：B/L、CI、EMF、其他 | 每份 PDF 首页文字 | 自动归类，缺件或放错时提示 |
-| HS 编码核对 | Choice：匹配、不匹配、无法判断 | 货物描述 + CI 上的 HS 编码及其税则描述 | 不匹配的行在校验报告标红，交给人工 |
-| HS 编码建议 | 分层 Choice：章 → 品目 → 子目 → 10 位税号 | 货物描述 + 每层候选列表 | 作为建议列写进报告，导入仍用 CI 原值，人工决定是否采纳 |
-| 计量单位映射 | Choice | CI 上的单位 + Candata 单位代码表 | 写入导入 Excel |
+| Document type | Choice: B/L, CI, EMF, other | First-page text of each PDF | Sorts documents automatically; warns when one is missing or misplaced |
+| HS code check | Choice: match, mismatch, cannot tell | Goods description + HS code on the CI and its tariff description | Mismatched lines are marked red in the validation report for a person to handle |
+| HS code suggestion | Layered Choice: chapter → heading → subheading → 10-digit tariff item | Goods description + candidate list for each layer | Written to the report as a suggestion column; the import still uses the CI value, and a person decides whether to adopt it |
+| Unit mapping | Choice | Unit on the CI + Candata unit code table | Written into the import Excel |
 
-- 一个 Choice 最多 255 个选项，所以 HS 建议必须逐层选；每层候选来自加拿大海关税则（Customs Tariff），需要整理成本地数据文件放在 `config/tariff/`。
-- 每个答案带置信度，低于阈值就留空并标红；阈值写在 settings.yaml，用样本资料调。
-- Jev 目前是封闭的托管 API，官方通道需要申请 early access；不排队的方式是 Vercel AI Gateway（typesafe-ai/jev）或 Cloudflare Workers AI（typesafe/jev）。分类模块同样走统一接口，Jev 不可用时可以换成 Gemini 或 Azure 模型。
+- A Choice allows at most 255 options, so HS suggestions must be chosen layer by layer. The candidates for each layer come from the Canadian Customs Tariff and need to be prepared as local data files in `config/tariff/`.
+- Every answer has a confidence. Below the threshold, the field is left blank and marked red. The threshold is set in `settings.yaml` and tuned on sample shipments.
+- Jev is currently a closed hosted API. The official route requires applying for early access; routes without a waitlist are Vercel AI Gateway (`typesafe-ai/jev`) and Cloudflare Workers AI (`typesafe/jev`). The classifier module also sits behind a common interface, so Gemini or Azure models can replace Jev if it is unavailable.
 
-来源：[awesome-jev 资料汇总](https://github.com/kraayenjon/awesome-jev/wiki)、[TrueFoundry 对 Jev 的介绍](https://www.truefoundry.com/de/blog/typesafe-ai-jev)
+Sources: [awesome-jev resource list](https://github.com/kraayenjon/awesome-jev/wiki), [TrueFoundry on Jev](https://www.truefoundry.com/de/blog/typesafe-ai-jev)
 
-## 数据结构
+## Data structure
 
-所有模块共用一份 shipment JSON，它也是 Flow 状态的主体：`header` 给填表模块，`lines` 给 Excel 模块，每个字段带 `source` 标明来自哪份单据，`investigation` 记录排查 Crew 改过什么、依据是什么。字段清单是初稿，待对照 Candata 界面和导入模板定稿。
+All modules share one shipment JSON, which is also the core of the Flow state. `header` feeds the form filler and `lines` feeds the Excel writer. Every field has a `source` naming the document it came from, and `investigation` records what the investigation crew changed and on what evidence. The field list is a first draft, to be finalized against the Candata screens and import template.
 
-| 字段 | 来源 | 用途 |
+| Field | Source | Used for |
 | --- | --- | --- |
-| bl_number 提单号 | B/L（EMF、CI 交叉核对） | 表头 |
-| cargo_control_number CCN | EMF | 表头 |
-| carrier_code 承运人代码 | EMF | 表头 |
-| port_of_entry 入境口岸 | EMF | 表头 |
-| eta 预计到港 | EMF | 表头 |
-| shipper / consignee 收发货人 | B/L（CI 核对） | 表头 |
-| port_of_loading / discharge 装卸港 | B/L | 表头 |
-| packages / package_type 件数与包装 | B/L（EMF 核对） | 表头 |
-| gross_weight 毛重 | B/L（EMF 核对） | 表头 |
-| vessel_voyage / container 船名航次与柜号 | B/L | 表头 |
-| invoice_number / date 发票号与日期 | CI | 表头 |
-| vendor / purchaser 卖方与买方 | CI | 表头 |
-| currency / incoterms 币种与成交条款 | CI | 表头 |
-| invoice_total 发票总额 | CI | 校验 |
-| description 货物描述 | CI | 明细 |
-| hs_code HS 编码 | CI（原样） | 明细 |
-| country_of_origin 原产国 | CI | 明细 |
-| quantity / unit 数量与单位 | CI | 明细 |
-| unit_price / amount 单价与金额 | CI | 明细 |
+| bl_number | B/L (cross-checked with EMF and CI) | Header |
+| cargo_control_number (CCN) | EMF | Header |
+| carrier_code | EMF | Header |
+| port_of_entry | EMF | Header |
+| eta | EMF | Header |
+| shipper / consignee | B/L (checked against CI) | Header |
+| port_of_loading / discharge | B/L | Header |
+| packages / package_type | B/L (checked against EMF) | Header |
+| gross_weight | B/L (checked against EMF) | Header |
+| vessel_voyage / container | B/L | Header |
+| invoice_number / date | CI | Header |
+| vendor / purchaser | CI | Header |
+| currency / incoterms | CI | Header |
+| invoice_total | CI | Validation |
+| description | CI | Lines |
+| hs_code | CI (as printed) | Lines |
+| country_of_origin | CI | Lines |
+| quantity / unit | CI | Lines |
+| unit_price / amount | CI | Lines |
 
-示例（省略部分字段）：
+Example (some fields omitted):
 
 ```json
 {
@@ -168,44 +172,44 @@ PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断�
 }
 ```
 
-## 依赖
+## Dependencies
 
-运行环境是 Windows 10/11 + Python 3.10–3.13（64 位，建议 3.12；CrewAI 当前要求 >=3.10,<3.14），外加所选 LLM 提供方的凭据；下表版本号为最低要求，联调通过后应锁定具体版本。
+The runtime is Windows 10/11 with 64-bit Python 3.10–3.13 (3.12 recommended; CrewAI currently requires >=3.10,<3.14), plus credentials for the chosen LLM provider. The versions below are minimums; pin exact versions once integration testing passes.
 
-### Python 包
+### Python packages
 
-| 包 | 最低版本 | 用途 | 模块 |
+| Package | Minimum version | Purpose | Module |
 | --- | --- | --- | --- |
-| pymupdf | 1.24 | 读取 PDF 文字层，find_tables() 提取表格，检测扫描件 | text |
-| crewai | 1.15 | Flow 编排、抽取与排查 Crew、调用 LLM；按提供方装 extra | flow、crews |
-| typesafe-sdk | 待联调确定 | 调用 Jev 做分类 | classifier |
-| pydantic | 2.5 | 定义并校验 shipment JSON 结构、Flow 状态、任务输出 | schema、flow、validator |
-| openpyxl | 3.1 | 生成导入用 xlsx | excel_writer |
-| pywinauto | 0.6.8 | 识别 Candata 控件，模拟鼠标键盘 | rpa_filler、rpa_importer |
-| pyautogui | 0.9.54 | 坐标点击后备方案、屏幕截图 | rpa_filler、reviewer |
-| Pillow | 10.0 | 保存和处理截图 | reviewer |
-| keyboard | 0.13.5 | 全局紧急停止热键（Esc） | rpa_filler |
-| PyYAML | 6.0 | 读取字段映射和界面定位配置 | 全部 |
-| python-dotenv | 1.0 | 从 .env 读取凭据和 CrewAI 环境变量 | flow、classifier |
+| pymupdf | 1.24 | Read the PDF text layer, extract tables with `find_tables()`, detect scanned PDFs | text |
+| crewai | 1.15 | Flow orchestration, extraction and investigation crews, LLM calls; install the extra for the provider | flow, crews |
+| typesafe-sdk | To be decided during integration | Call Jev for classification | classifier |
+| pydantic | 2.5 | Define and validate the shipment JSON, Flow state and task outputs | schema, flow, validator |
+| openpyxl | 3.1 | Generate the import xlsx | excel_writer |
+| pywinauto | 0.6.8 | Find Candata controls, simulate mouse and keyboard | rpa_filler, rpa_importer |
+| pyautogui | 0.9.54 | Coordinate-click fallback, screenshots | rpa_filler, reviewer |
+| Pillow | 10.0 | Save and process screenshots | reviewer |
+| keyboard | 0.13.5 | Global emergency stop hotkey (Esc) | rpa_filler |
+| PyYAML | 6.0 | Read field mappings and UI locator config | all |
+| python-dotenv | 1.0 | Read credentials and CrewAI environment variables from `.env` | flow, classifier |
 
-crewai 按选定的模型提供方装一个 extra：Anthropic 用 `crewai[anthropic]`，OpenAI 用 `crewai[openai]`，OpenRouter 等其他提供方用 `crewai[litellm]`。每个 agent 的模型写在 settings.yaml，换模型只改配置；classifier 仍定义统一接口，Jev 不可用时可以换成 Gemini 或 Azure 模型。扫描件读不出文字时默认转人工；如果扫描件多，再加入本地免费的 PaddleOCR（`paddleocr` + `paddlepaddle`）作备选。
+Install one crewai extra for the chosen model provider: `crewai[anthropic]` for Anthropic, `crewai[openai]` for OpenAI, `crewai[litellm]` for OpenRouter and other providers. The model for each agent is set in `settings.yaml`, so switching models only changes config. The classifier still defines a common interface so Gemini or Azure models can replace Jev if it is unavailable. When a scanned PDF has no readable text, the default is to hand it to a person. If scanned PDFs turn out to be common, add the free local PaddleOCR (`paddleocr` + `paddlepaddle`) as a fallback.
 
-依赖分成两个文件：抽取那一段可以在任何电脑上跑，Candata 电脑只做填表时不必装 CrewAI。
+Dependencies are split into two files: extraction can run on any computer, and a Candata computer that only fills forms does not need CrewAI.
 
-`requirements-extract.txt`（`main.py extract`）：
+`requirements-extract.txt` (`main.py extract`):
 
 ```
-# 文字提取
+# Text extraction
 pymupdf>=1.24
-# paddleocr + paddlepaddle   # 扫描件本地 OCR 备选
+# paddleocr + paddlepaddle   # local OCR fallback for scanned PDFs
 
-# 编排与抽取：按选定的模型提供方三选一，联调后锁定版本
+# Orchestration and extraction: pick one for the chosen provider; pin after integration
 crewai[anthropic]>=1.15      # Claude Haiku 5.5 / Sonnet 5.5
 # crewai[openai]>=1.15       # GPT-6 Luna
-# crewai[litellm]>=1.15      # OpenRouter 等其他提供方
+# crewai[litellm]>=1.15      # OpenRouter and other providers
 
-# 分类
-typesafe-sdk                 # Jev，联调后锁定版本
+# Classification
+typesafe-sdk                 # Jev; pin after integration
 
 pydantic>=2.5
 openpyxl>=3.1
@@ -213,7 +217,7 @@ PyYAML>=6.0
 python-dotenv>=1.0
 ```
 
-`requirements-fill.txt`（`main.py fill`，Candata 电脑）：
+`requirements-fill.txt` (`main.py fill`, Candata computer):
 
 ```
 pydantic>=2.5
@@ -224,7 +228,7 @@ keyboard>=0.13.5
 PyYAML>=6.0
 ```
 
-安装（两段都在同一台电脑上跑时两个都装）：
+Install (install both when both stages run on the same computer):
 
 ```
 python -m venv .venv
@@ -232,52 +236,54 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-fill.txt
 ```
 
-### 系统与工具
+### System and tools
 
-- **Candata Global Windows 客户端**：已登录，脚本与客户端要在同一权限级别运行；客户端若以管理员身份启动，脚本也必须以管理员身份运行，否则 pywinauto 读不到控件。
-- **显示设置**：缩放固定为 100%，Candata 窗口最大化，运行期间不锁屏、不远程断开。
-- **Inspect.exe**（Windows SDK 自带）或 Accessibility Insights：开发时查看控件名和层级。
-- **Microsoft Excel**：非必需，仅用于人工查看生成的 xlsx。
+- **Candata Global Windows client**: logged in. The script must run at the same privilege level as the client. If the client was started as administrator, the script must run as administrator too, or pywinauto cannot read its controls.
+- **Display settings**: scaling fixed at 100%, Candata window maximized, no screen lock or remote disconnect during a run.
+- **Inspect.exe** (part of the Windows SDK) or Accessibility Insights: for viewing control names and hierarchy during development.
+- **Microsoft Excel**: optional, only for viewing the generated xlsx by hand.
 
-### 外部服务
+### External services
 
-- **Anthropic API**（Claude Haiku 5.5 / Sonnet 5.5）或 **OpenAI API**（GPT-6 Luna）：二选一，需要对应的 API key。也可以用 **OpenRouter**：一个 key 调多家模型，token 单价不加价，充值收 5.5% 手续费（每次至少 $0.80）。
-- **CrewAI**：开源库，在本地运行，不需要 CrewAI 账号；遥测和 tracing 按"CrewAI 编排"一节关闭。
-- **Jev（TypeSafe AI）**：需要 TYPESAFE_API_KEY；官方 API 需申请 early access，也可以通过 Vercel AI Gateway 或 Cloudflare Workers AI 调用。
-- 文字提取在本地完成，不依赖外部 OCR 服务。
-- 以上服务按用量计费，模型名写在配置里便于更换；单据文字会发送到外部服务，使用前需确认符合公司和客户的数据处理要求。
+- **Anthropic API** (Claude Haiku 5.5 / Sonnet 5.5) or **OpenAI API** (GPT-6 Luna): pick one; each needs its API key. **OpenRouter** also works: one key reaches models from several vendors, with no markup on token prices and a 5.5% fee on credit purchases (minimum $0.80 per purchase).
+- **CrewAI**: an open-source library that runs locally; no CrewAI account needed. Telemetry and tracing are turned off as described in "CrewAI orchestration".
+- **Jev (TypeSafe AI)**: needs `TYPESAFE_API_KEY`. The official API requires applying for early access; Jev can also be called through Vercel AI Gateway or Cloudflare Workers AI.
+- Text extraction runs locally and does not depend on an external OCR service.
+- These services bill by usage, and model names are kept in config so they are easy to change. Document text is sent to external services, so confirm this meets the company's and clients' data handling requirements before use.
 
-## 项目结构与配置
+Sign-up steps and `.env` variable names are in the README, section "Accounts and API keys".
 
-字段映射、界面定位和 Excel 列顺序都放在 `config/` 的 YAML 里，Candata 界面或模板变了只改配置，不改代码。agent 和任务的提示词放在各 crew 自己的 `config/` 里。
+## Project structure and configuration
+
+Field mappings, UI locators and Excel column order all live in YAML under `config/`. When the Candata screens or template change, only config changes, not code. Agent and task prompts live in each crew's own `config/`.
 
 ```
 cad-autofill/
 ├── config/
-│   ├── settings.yaml        # 每个 agent 的模型、guardrail 重试次数、置信度阈值、目录、超时
-│   ├── header_fields.yaml   # JSON 字段 → Candata 控件定位 → 格式规则
-│   ├── excel_template.yaml  # Candata 发票导入模板的列顺序与格式
-│   └── tariff/              # 加拿大海关税则分层候选、Candata 单位代码表
+│   ├── settings.yaml        # model per agent, guardrail retries, confidence thresholds, folders, timeouts
+│   ├── header_fields.yaml   # JSON field → Candata control locator → format rules
+│   ├── excel_template.yaml  # column order and formats of the Candata invoice import template
+│   └── tariff/              # layered Canadian Customs Tariff candidates, Candata unit code table
 ├── src/
 │   ├── text/
-│   │   ├── pdf_text.py      # pymupdf 文字层与表格提取、扫描件检测
-│   │   └── paddle.py        # 本地 OCR 备选
-│   ├── flow.py              # ShipmentFlow：load_texts → extract → validate → … → write_excel
+│   │   ├── pdf_text.py      # pymupdf text layer and table extraction, scanned-PDF detection
+│   │   └── paddle.py        # local OCR fallback
+│   ├── flow.py              # ShipmentFlow: load_texts → extract → validate → … → write_excel
 │   ├── crews/
 │   │   ├── extraction/
-│   │   │   ├── config/agents.yaml   # B/L、CI、EMF 专员与核对员
+│   │   │   ├── config/agents.yaml   # B/L, CI and EMF specialists and reconciler
 │   │   │   ├── config/tasks.yaml
-│   │   │   ├── guardrails.py        # 必填字段与格式检查
+│   │   │   ├── guardrails.py        # required-field and format checks
 │   │   │   └── crew.py
 │   │   └── investigation/
-│   │       ├── config/agents.yaml   # 排查员
+│   │       ├── config/agents.yaml   # investigator
 │   │       ├── config/tasks.yaml
 │   │       └── crew.py
-│   ├── agent_tools/         # 排查用只读工具：read_page_text、read_page_tables、recompute_totals
+│   ├── agent_tools/         # read-only investigation tools: read_page_text, read_page_tables, recompute_totals
 │   ├── classifier/
-│   │   ├── base.py          # 分类接口：单据类型、HS 核对与建议、单位映射
+│   │   ├── base.py          # classifier interface: document type, HS check and suggestion, unit mapping
 │   │   └── jev.py
-│   ├── schema.py            # pydantic 模型：shipment、Flow 状态、InvestigationResult
+│   ├── schema.py            # pydantic models: shipment, Flow state, InvestigationResult
 │   ├── validator.py
 │   ├── excel_writer.py
 │   ├── rpa_filler.py
@@ -285,91 +291,91 @@ cad-autofill/
 │   └── reviewer.py
 ├── tools/
 │   └── scan_candata_controls.py
-├── inbox/                   # 每票货一个子文件夹，放三份 PDF
-├── output/                  # 提取文本、JSON、xlsx、校验报告、截图、日志
+├── inbox/                   # one subfolder per shipment holding its three PDFs
+├── output/                  # extracted text, JSON, xlsx, validation reports, screenshots, logs
 ├── main.py
 ├── requirements-extract.txt
 ├── requirements-fill.txt
-└── .env                     # 模型 key（ANTHROPIC_/OPENAI_/OPENROUTER_API_KEY 之一）、TYPESAFE_API_KEY、
-                             # CREWAI_DISABLE_TELEMETRY、OTEL_SDK_DISABLED、CREWAI_TRACING_ENABLED；不进版本库
+└── .env                     # model key (one of ANTHROPIC_/OPENAI_/OPENROUTER_API_KEY), TYPESAFE_API_KEY,
+                             # CREWAI_DISABLE_TELEMETRY, OTEL_SDK_DISABLED, CREWAI_TRACING_ENABLED; not committed
 ```
 
-`header_fields.yaml` 示例：
+`header_fields.yaml` example:
 
 ```yaml
 bl_number:
-  locator: {auto_id: "txtBillOfLading"}   # 待控件扫描后确定
+  locator: {auto_id: "txtBillOfLading"}   # to be confirmed by the control scan
   fallback: {tab_from: "txtShipmentNo", tabs: 3}
   type: text
 port_of_entry:
   locator: {title: "Port", control_type: "ComboBox"}
-  type: combobox                           # 输入后等待候选并精确匹配
+  type: combobox                           # type, wait for candidates, pick the exact match
   format: "{value:0>4}"
 ```
 
-运行方式分两档：`python main.py extract inbox/<票号>` 运行 ShipmentFlow，只做识别和生成 Excel，可在任何电脑运行；`python main.py fill inbox/<票号>` 在 Candata 电脑上执行填表和导入，读取 extract 生成的 JSON 和 xlsx，不使用 CrewAI。
+There are two run modes. `python main.py extract inbox/<shipment>` runs ShipmentFlow: it only extracts and generates the Excel file, and can run on any computer. `python main.py fill inbox/<shipment>` runs on the Candata computer: it fills the form and imports the lines, reading the JSON and xlsx produced by `extract`, and does not use CrewAI.
 
-## 风险与注意事项
+## Risks and notes
 
-最大的风险是 Candata 界面控件识别不到，这决定了 RPA 的稳定性，应该最先验证。
+The biggest risk is that Candata's controls cannot be detected. That decides how reliable the RPA can be, so it should be checked first.
 
-| 风险 | 影响 | 应对 |
+| Risk | Impact | Mitigation |
 | --- | --- | --- |
-| 控件识别不到（自绘界面） | 只能用 Tab 导航或坐标，容易填错 | 先跑 scan_candata_controls.py 评估；每个字段填完回读核对 |
-| Candata 升级改界面 | 定位失效 | 定位全部放配置；启动时自检关键控件是否存在 |
-| AI 识别错误 | 表头或明细数据错 | 交叉校验；低置信度字段标红；人工复核后才提交 |
-| 多 agent 输出不稳定、token 用量变多 | 同一票多跑几次结果可能不同；成本高于单次调用 | output_pydantic + guardrail 约束格式；硬规则用代码校验；用样本实测 token 用量和通过率后再定模型 |
-| 排查 Crew 改错数据 | 把正确的值"修正"成错的 | 每处修正必须附原文依据；修正过的字段在复核时标出；排查员只有只读工具 |
-| CrewAI 版本更新快 | 升级后接口变化 | 锁定版本；升级前用样本回归 |
-| CrewAI 遥测或 tracing 上传 | 单据内容外传 | 用环境变量关闭遥测和 tracing；上线前确认没有对外上报 |
-| CI 上的 HS 编码是出口国 6/8 位编码 | 导入可能报错，或与加拿大 10 位税则号不符 | 原样导入，人工修正；若导入拒绝则留空 |
-| 运行中有人动鼠标键盘 | 填到错误位置 | Esc 紧急停止；运行前弹窗提示；焦点丢失即中止 |
-| 弹窗或加载慢 | 脚本卡住或提前操作 | 每一步显式等待控件出现，不用固定 sleep；未知弹窗截图并停止 |
-| 客户单据发送到外部 API | 数据合规 | 上线前确认公司和客户的数据处理政策 |
-| 自动化操作可能受软件许可限制 | 合同风险 | 向 Candata 确认服务协议是否允许 |
+| Controls not detectable (custom-drawn UI) | Only Tab navigation or coordinates remain, which makes wrong entries easy | Run `scan_candata_controls.py` first; read back every field after typing |
+| Candata upgrade changes the UI | Locators break | Keep all locators in config; check key controls exist at startup |
+| AI extraction errors | Wrong header or line data | Cross-validation; mark low-confidence fields red; submit only after human review |
+| Multi-agent output is unstable and uses more tokens | Repeated runs on the same shipment may differ; cost is higher than a single call | `output_pydantic` + guardrails constrain format; hard rules checked in code; measure tokens and pass rate on samples before choosing models |
+| Investigation crew corrupts data | A correct value gets "corrected" to a wrong one | Every correction must cite the source text; corrected fields are highlighted at review; the investigator has read-only tools only |
+| CrewAI changes quickly | Upgrades change the API | Pin the version; run regression on samples before upgrading |
+| CrewAI telemetry or tracing uploads data | Document content leaves the company | Turn off telemetry and tracing with environment variables; confirm nothing is reported externally before go-live |
+| HS codes on the CI are the exporting country's 6/8-digit codes | Import may fail, or not match Canada's 10-digit tariff items | Import as printed and correct by hand; leave blank if the import rejects them |
+| Someone moves the mouse or types during a run | Data entered in the wrong place | Esc emergency stop; warning dialog before a run; abort on focus loss |
+| Popups or slow loading | Script hangs or acts too early | Wait explicitly for controls at every step, no fixed sleeps; screenshot and stop on unknown popups |
+| Client documents sent to external APIs | Data compliance | Confirm the company's and clients' data handling policies before go-live |
+| Automation may be restricted by the software license | Contract risk | Ask Candata whether the service agreement allows it |
 
-pymupdf 只能读出电子版 PDF 的文字层：扫描件或图片型 PDF 读不到文字，程序检测到文字过少时转人工；上线前统计扫描件占比，占比高再启用 PaddleOCR 备选。
+pymupdf only reads the text layer of digital PDFs. Scanned or image-only PDFs have no readable text; when the program detects too little text, it hands the shipment to a person. Before go-live, measure the share of scanned PDFs, and enable the PaddleOCR fallback if it is high.
 
-CAD 由持牌报关员负责，程序始终停在提交前，提交动作只由人完成。
+A licensed broker is responsible for every CAD. The program always stops before submission, and only a person submits.
 
-## 成本估算
+## Cost estimate
 
-用 pymupdf 读文字层、CrewAI 多 agent 抽取时，API 成本约每票 0.02 美元，每月 1,000 票约 20 美元，约为之前 Azure OCR + Gemini 方案（约 0.10 美元/票）的五分之一。单次调用抽取的写法约 0.015 美元/票，多出的部分是多 agent 的代价。
+With pymupdf reading the text layer and CrewAI running multi-agent extraction, API cost is about $0.02 per shipment, or about $20 a month at 1,000 shipments. That is about one fifth of the earlier Azure OCR + Gemini design (about $0.10 per shipment). A single-call extraction would cost about $0.015 per shipment; the difference is the cost of multiple agents.
 
-| 项目 | 单价（每百万 token，输入 / 输出） | 每票用量（假设） | 每票成本（USD） |
+| Item | Price (per million tokens, input / output) | Usage per shipment (assumed) | Cost per shipment (USD) |
 | --- | --- | --- | --- |
-| 文字提取：pymupdf | 免费，本地运行 | 5 页 | 0 |
-| 抽取 Crew：Claude Haiku 5.5 或 GPT-6 Luna | $0.10 / $0.50 | 4 次调用（3 个专员 + 核对员），输入 15,000–20,000、输出 8,000–10,000 token | 约 0.006–0.007 |
-| 排查 Crew：Claude Sonnet 5.5（假设 10% 的票） | $2 / $10 | 每次输入约 30,000、输出约 3,000 token（多轮工具调用会重复发送上下文） | 约 0.009（摊到每票） |
-| 分类：Jev | 输入 $0.042 | 约 100,000 token（20 行明细，含分层 HS 建议） | 约 0.004 |
-| **合计** | | | **约 0.02** |
+| Text extraction: pymupdf | Free, runs locally | 5 pages | 0 |
+| Extraction crew: Claude Haiku 5.5 or GPT-6 Luna | $0.10 / $0.50 | 4 calls (3 specialists + reconciler), 15,000–20,000 input and 8,000–10,000 output tokens | about 0.006–0.007 |
+| Investigation crew: Claude Sonnet 5.5 (assumed for 10% of shipments) | $2 / $10 | About 30,000 input and 3,000 output tokens per run (multi-turn tool calls resend the context) | about 0.009 (spread over all shipments) |
+| Classification: Jev | Input $0.042 | About 100,000 tokens (20 lines, including layered HS suggestions) | about 0.004 |
+| **Total** | | | **about 0.02** |
 
-- 假设：每票 5 页（B/L 1–2 页、CI 1–3 页、EMF 1 页），每页文字约 1,500 token；Haiku 5.5 的分词器对同样文本多产生约 30% token，已计入区间上限。抽取的用量比单次调用多，是因为每个 agent 都带 CrewAI 的角色提示，核对员还要再读一遍三个专员的输出。
-- Haiku 5.5 的低价只适用于 10 万 token 以内的 prompt，每次调用的 prompt 都在 1–2 万 token 以内，远低于门槛。
-- 排查比例是最大的变量：不触发排查时合计约 0.01 美元/票；排查比例升到 30% 时约 0.04 美元/票。guardrail 打回重做也会增加用量，没计入上表。用样本资料实测 token 用量和校验通过率后再修正。
-- 扫描件转人工不产生 API 费用；启用 PaddleOCR 备选也免费，只占本地 CPU。
-- 不含：开发人力、运行 Candata 的 Windows 电脑、Candata 许可。CrewAI 是开源库，不收费。Jev 仍在 early access，定价可能变化。
+- Assumptions: 5 pages per shipment (B/L 1–2 pages, CI 1–3 pages, EMF 1 page), about 1,500 tokens of text per page. Haiku 5.5's tokenizer produces about 30% more tokens for the same text; this is included in the upper end of the range. Extraction uses more tokens than a single call because every agent carries CrewAI's role prompt, and the reconciler reads the three specialists' output again.
+- Haiku 5.5's low price applies only to prompts under 100,000 tokens. Every prompt here is 10,000–20,000 tokens, well below that limit.
+- The investigation rate is the biggest variable: with no investigation the total is about $0.01 per shipment; at a 30% investigation rate it is about $0.04. Guardrail retries also add usage and are not included above. Revise after measuring tokens and validation pass rate on sample shipments.
+- Scanned PDFs handed to a person cost nothing in API fees; the PaddleOCR fallback is also free and uses only local CPU.
+- Not included: development time, the Windows computer running Candata, the Candata license. CrewAI is an open-source library and free. Jev is still in early access, so its pricing may change.
 
-来源：[Claude 定价](https://platform.claude.com/docs/en/about-claude/pricing)、[Haiku 5.5 分档定价与 Sonnet 5.5 价格](https://mixed-news.com/en/?p=35958)、[Haiku 5.5 分词器 token 变化](https://mixed-news.com/en/?p=35955)、[GPT-6 Luna 定价（Simon Willison）](https://simonwillison.net/tags/llm-pricing)、[TrueFoundry 对 Jev 的介绍](https://www.truefoundry.com/de/blog/typesafe-ai-jev)
+Sources: [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing), [Haiku 5.5 tiered pricing and Sonnet 5.5 prices](https://mixed-news.com/en/?p=35958), [Haiku 5.5 tokenizer token changes](https://mixed-news.com/en/?p=35955), [GPT-6 Luna pricing (Simon Willison)](https://simonwillison.net/tags/llm-pricing), [TrueFoundry on Jev](https://www.truefoundry.com/de/blog/typesafe-ai-jev)
 
-## 待确认事项与下一步
+## Open items and next steps
 
-动手写填表和 Excel 模块之前，需要先拿到以下信息。
+Before writing the form-filling and Excel modules, the following must be in hand.
 
-- [ ] 在 Candata shipment 表头界面运行 scan_candata_controls.py，确认控件能否识别
-- [x] 拿到 Candata 发票明细导入模板的列标题和格式要求（帮助中心文章：Shipment Invoice details loading via Excel/CSV spreadsheets）
-- [x] 列出人工录入时从 B/L 和 EMF 抄到 Candata 的字段，及对应的界面字段名
-- [x] 确认 EMF 的具体格式（ACI eManifest 导出的 PDF，还是其他）
-- [x] 确认 Candata 导入时是否校验 HS 编码位数
-- [x] 准备 3–5 票隐去敏感信息的样本资料，用于测试抽取准确率
-- [x] 选定 LLM 提供方，准备凭据并完成数据合规审批
-- [ ] 用 1–2 票样本跑通抽取 Crew，实测 token 用量和校验通过率
-- [ ] 锁定 CrewAI 版本，确认遥测和 tracing 已关闭
+- [ ] Run `scan_candata_controls.py` on the Candata shipment header screen to confirm the controls can be detected
+- [x] Get the column headings and format requirements of Candata's invoice-lines import template (help center article: Shipment Invoice details loading via Excel/CSV spreadsheets)
+- [x] List the fields copied by hand from the B/L and EMF into Candata, and their names on screen
+- [x] Confirm the exact EMF format (a PDF exported from ACI eManifest, or something else)
+- [x] Confirm whether Candata checks the number of HS code digits on import
+- [x] Prepare 3–5 redacted sample shipments to test extraction accuracy
+- [x] Choose the LLM provider, prepare credentials and complete data compliance approval
+- [ ] Run the extraction crew end to end on 1–2 sample shipments and measure token use and validation pass rate
+- [ ] Pin the CrewAI version and confirm telemetry and tracing are off
 
-开发顺序：
+Development order:
 
-1. Flow 骨架 + 抽取 Crew + validator + excel_writer：用样本资料跑通识别到 xlsx，人工导入验证。
-2. 排查 Crew：用有真实冲突或故意改错的样本测试，确认每处修正都有原文依据。
-3. rpa_importer：自动完成 Excel 导入，这一步界面操作少，适合先验证 RPA 可行性。
-4. rpa_filler：逐步加入表头字段，先做文本框，再做下拉框和自动补全。
-5. reviewer + 完整流程串联，小批量试运行。
+1. Flow skeleton + extraction crew + validator + excel_writer: run samples from extraction to xlsx and verify by importing by hand.
+2. Investigation crew: test on samples with real conflicts or deliberately corrupted values, and confirm every correction cites the source text.
+3. rpa_importer: automate the Excel import. This step has few UI actions, so it is a good first test of RPA feasibility.
+4. rpa_filler: add header fields step by step, text boxes first, then drop-downs and autocomplete.
+5. reviewer + end-to-end wiring, then a small pilot batch.
