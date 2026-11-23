@@ -224,3 +224,9 @@ __marimo__/
 
 # Pipeline output: extracted text, JSON, xlsx, screenshots, control scans (may contain shipment data)
 /output/
+
+# Shipment emails and PDFs fetched from Gmail
+/inbox/
+
+# Gmail OAuth client and token
+/secrets/

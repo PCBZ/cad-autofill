@@ -1,9 +1,10 @@
 # cad-autofill
 
-Fills Candata CAD entries from B/L, commercial invoice and EMF documents:
-AI extraction, a generated invoice-lines Excel import, and RPA that types the
-shipment header into the Candata Global Windows client. A licensed broker
-reviews and submits every CAD; the program always stops before submission.
+Fills Candata CAD entries from B/L, commercial invoice and EMF documents
+received by email: Gmail intake, AI extraction, a generated invoice-lines
+Excel import, and RPA that types the shipment header into the Candata Global
+Windows client. A licensed broker reviews and submits every CAD; the program
+always stops before submission.
 
 Design: [docs/design.md](docs/design.md) ([中文](docs/design.zh.md))
 
@@ -11,38 +12,70 @@ Design: [docs/design.md](docs/design.md) ([中文](docs/design.zh.md))
 
 Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
-| Service | Needed for | Account | Key or credential | `.env` variable |
+| Service | Needed for | Account | Credential | Where it goes |
 | --- | --- | --- | --- | --- |
-| Model provider, **pick one** | Extraction and investigation crews | See the options below | API key | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` |
-| Jev (TypeSafe AI), **pick one route** | Document type, HS check and unit mapping | See the options below | API key or token | See the options below |
+| OpenRouter | Extraction crew, investigation crew and Jev | OpenRouter account with credits | API key | `.env`: `OPENROUTER_API_KEY` |
+| Gmail API | `main.py fetch` reads shipment emails | Google Cloud project, plus the mailbox that receives the documents | OAuth client (Desktop app) and a saved token | `secrets/gmail_client.json`, `secrets/gmail_token.json` |
 | Candata Global | Header fill and invoice import | Existing broker login on the Candata machine | None. The RPA uses the logged-in client | None |
 | GitHub | Code and issues | Access to the private `PCBZ/cad-autofill` repo | None | None |
 | CrewAI | Orchestration | **No account.** Runs locally | None | Telemetry and tracing off (below) |
+| Jev (TypeSafe AI) | Document type, HS check and unit mapping | **No account.** Called through OpenRouter | The OpenRouter key | None extra |
 
-### Model provider (pick one)
+### OpenRouter
 
-- **Anthropic**: create an organization at [platform.claude.com](https://platform.claude.com), add billing, then create a key under API keys. Models: Claude Haiku 5.5 (extraction) and Sonnet 5.5 (investigation).
-- **OpenAI**: create a project at [platform.openai.com](https://platform.openai.com), add billing, then create a project API key. Model: GPT-6 Luna.
-- **OpenRouter**: sign up at [openrouter.ai](https://openrouter.ai), buy credits, then create a key under Keys. One key reaches several vendors at their token prices, plus a 5.5% fee on each credit purchase (minimum $0.80). Model names in `settings.yaml` take the form `openrouter/<vendor>/<model>`.
+1. Sign up at [openrouter.ai](https://openrouter.ai) and buy credits. Each
+   purchase carries a 5.5% fee (minimum $0.80); token prices have no markup.
+2. Under Keys, create a key with a credit limit, and put it in `.env` as
+   `OPENROUTER_API_KEY`.
+3. In the account's privacy settings, allow only providers that do not train
+   on prompts.
 
-Set a monthly spend limit on whichever account you use. Expected cost is
-about $0.02 per shipment (see `docs/design.md`, cost section).
+The same key is used for:
 
-### Jev (pick one route)
+- the crews through CrewAI and LiteLLM: `openrouter/anthropic/claude-haiku-5.5`
+  (extraction) and `openrouter/anthropic/claude-sonnet-5.5` (investigation);
+- Jev through the TypeSafe SDK with base URL `https://openrouter.ai/api`,
+  model `typesafe/jev-1.14`. No TypeSafe account or waitlist is needed.
 
-- **TypeSafe AI official API**: apply for early access. When approved, create a key and set `TYPESAFE_API_KEY`.
-- **Vercel AI Gateway** (no waitlist): a Vercel account with AI Gateway enabled. Create an AI Gateway API key and set `AI_GATEWAY_API_KEY`. Model id `typesafe-ai/jev`.
-- **Cloudflare Workers AI** (no waitlist): a Cloudflare account. Note the account ID and create an API token with Workers AI permission. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Model id `typesafe/jev`.
+Expected cost is about $0.02 per shipment (see `docs/design.md`, cost
+section).
 
-### Where the keys go
+### Gmail API
 
-- Keys go in `.env` at the project root on the machine that runs
-  `main.py extract`. `.env` is ignored by git; never commit it or paste keys
-  into issues.
-- The Candata machine only runs `main.py fill`. It needs no model or Jev key
-  unless it also runs `extract`.
-- Always add these lines so CrewAI sends no telemetry and no traces (traces
-  can contain shipment text):
+First confirm which mailbox and label receive the shipment documents, and
+whether the mailbox is on Google Workspace.
+
+1. In the [Google Cloud console](https://console.cloud.google.com), create a
+   project and enable the **Gmail API**.
+2. Configure the OAuth consent screen:
+   - Workspace mailbox: user type **Internal**. No Google verification is
+     needed and the token does not expire weekly. The Workspace admin may
+     need to allow the app under API controls.
+   - Personal @gmail.com mailbox: user type **External**, left in Testing
+     mode, with the mailbox added as a test user. The token then expires
+     every 7 days and someone has to sign in again. If that is not
+     acceptable, use IMAP with an app password instead (see the design doc).
+3. Add the scope `https://www.googleapis.com/auth/gmail.readonly` only. The
+   program never sends, deletes or relabels mail.
+4. Create an OAuth client ID of type **Desktop app**, download the JSON and
+   save it as `secrets/gmail_client.json`.
+5. The first `python main.py fetch` opens a browser. The mailbox owner signs
+   in and approves read-only access; the token is saved to
+   `secrets/gmail_token.json`.
+
+In Gmail, create a filter on the senders' addresses that applies the label
+(for example `CAD/Incoming`). Set the same label and the allowed senders in
+`config/settings.yaml`.
+
+### Where the credentials go
+
+- `.env` and `secrets/` sit at the project root on the machine that runs
+  `fetch` and `extract`. Both are ignored by git; never commit them or paste
+  keys or tokens into issues.
+- The Candata machine only runs `main.py fill`. It needs no OpenRouter key or
+  Gmail credentials unless it also runs `fetch` and `extract`.
+- Always add these lines to `.env` so CrewAI sends no telemetry and no traces
+  (traces can contain shipment text):
 
   ```
   CREWAI_DISABLE_TELEMETRY=true
@@ -52,10 +85,11 @@ about $0.02 per shipment (see `docs/design.md`, cost section).
 
 ### Before using real shipments
 
-Shipment text is sent to the model provider and to Jev. Before sending real
-documents, get approval under the company's and clients' data handling
-policies. Also confirm with Candata that UI automation of the client is
-allowed under the service agreement (issue in milestone M0).
+Shipment emails are read from Gmail, and document text is sent to OpenRouter
+and the model providers behind it, including TypeSafe for Jev. Before
+processing real shipments, get approval under the company's and clients' data
+handling policies. Also confirm with Candata that UI automation of the client
+is allowed under the service agreement (issue in milestone M0).
 
 ## Step 0: check that Candata's controls can be automated
 
