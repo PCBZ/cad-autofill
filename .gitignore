@@ -221,3 +221,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pipeline output: extracted text, JSON, xlsx, screenshots, control scans (may contain shipment data)
+/output/
