@@ -5,6 +5,56 @@ AI extraction, a generated invoice-lines Excel import, and RPA that types the
 shipment header into the Candata Global Windows client. A licensed broker
 reviews and submits every CAD; the program always stops before submission.
 
+## Accounts and API keys
+
+Step 0 below needs none of these. They are needed from M1 (extraction) on.
+
+| Service | Needed for | Account | Key or credential | `.env` variable |
+| --- | --- | --- | --- | --- |
+| Model provider, **pick one** | Extraction and investigation crews | See the options below | API key | One of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` |
+| Jev (TypeSafe AI), **pick one route** | Document type, HS check and unit mapping | See the options below | API key or token | See the options below |
+| Candata Global | Header fill and invoice import | Existing broker login on the Candata machine | None. The RPA uses the logged-in client | None |
+| GitHub | Code and issues | Access to the private `PCBZ/cad-autofill` repo | None | None |
+| CrewAI | Orchestration | **No account.** Runs locally | None | Telemetry and tracing off (below) |
+
+### Model provider (pick one)
+
+- **Anthropic**: create an organization at [platform.claude.com](https://platform.claude.com), add billing, then create a key under API keys. Models: Claude Haiku 5.5 (extraction) and Sonnet 5.5 (investigation).
+- **OpenAI**: create a project at [platform.openai.com](https://platform.openai.com), add billing, then create a project API key. Model: GPT-6 Luna.
+- **OpenRouter**: sign up at [openrouter.ai](https://openrouter.ai), buy credits, then create a key under Keys. One key reaches several vendors at their token prices, plus a 5.5% fee on each credit purchase (minimum $0.80). Model names in `settings.yaml` take the form `openrouter/<vendor>/<model>`.
+
+Set a monthly spend limit on whichever account you use. Expected cost is
+about $0.02 per shipment (see `docs/design.md`, cost section).
+
+### Jev (pick one route)
+
+- **TypeSafe AI official API**: apply for early access. When approved, create a key and set `TYPESAFE_API_KEY`.
+- **Vercel AI Gateway** (no waitlist): a Vercel account with AI Gateway enabled. Create an AI Gateway API key and set `AI_GATEWAY_API_KEY`. Model id `typesafe-ai/jev`.
+- **Cloudflare Workers AI** (no waitlist): a Cloudflare account. Note the account ID and create an API token with Workers AI permission. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Model id `typesafe/jev`.
+
+### Where the keys go
+
+- Keys go in `.env` at the project root on the machine that runs
+  `main.py extract`. `.env` is ignored by git; never commit it or paste keys
+  into issues.
+- The Candata machine only runs `main.py fill`. It needs no model or Jev key
+  unless it also runs `extract`.
+- Always add these lines so CrewAI sends no telemetry and no traces (traces
+  can contain shipment text):
+
+  ```
+  CREWAI_DISABLE_TELEMETRY=true
+  OTEL_SDK_DISABLED=true
+  CREWAI_TRACING_ENABLED=false
+  ```
+
+### Before using real shipments
+
+Shipment text is sent to the model provider and to Jev. Before sending real
+documents, get approval under the company's and clients' data handling
+policies. Also confirm with Candata that UI automation of the client is
+allowed under the service agreement (issue in milestone M0).
+
 ## Step 0: check that Candata's controls can be automated
 
 Before any RPA code is written, confirm that the Candata client exposes its
