@@ -2,6 +2,9 @@
 
     python main.py fetch                      Gmail label -> inbox/<shipment>/
     python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, xlsx
+    python main.py extract inbox/<shipment> --resume
+                                              after a validation failure: apply the person's
+                                              corrections.yaml and continue
     python main.py fill inbox/<shipment>      Candata: fill header, import lines, stop before submit
 
 Only the standard library is imported at module level, so `fill` runs on the
@@ -89,6 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run ShipmentFlow on one shipment folder. Results go to output/<shipment>/.",
     )
     extract.add_argument("shipment", type=shipment_dir, help="shipment folder, e.g. inbox/<shipment>")
+    extract.add_argument(
+        "--resume", action="store_true",
+        help="after a validation failure: apply output/<shipment>/corrections.yaml and "
+        "validate again without calling the extraction crew",
+    )
     extract.set_defaults(func=cmd_extract)
 
     fill = sub.add_parser(

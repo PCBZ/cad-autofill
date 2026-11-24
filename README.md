@@ -14,7 +14,7 @@ Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
 | Service | Needed for | Account | Credential | Where it goes |
 | --- | --- | --- | --- | --- |
-| OpenRouter | Extraction crew, investigation crew and Jev | OpenRouter account with credits | API key | `.env`: `OPENROUTER_API_KEY` |
+| OpenRouter | Extraction crew and Jev | OpenRouter account with credits | API key | `.env`: `OPENROUTER_API_KEY` |
 | Gmail API | `main.py fetch` reads shipment emails | Google Cloud project, plus the mailbox that receives the documents | OAuth client (Desktop app) and a saved token | `secrets/gmail_client.json`, `secrets/gmail_token.json` |
 | Candata Global | Header fill and invoice import | Existing broker login on the Candata machine | None. The RPA uses the logged-in client | None |
 | GitHub | Code and issues | Access to the private `PCBZ/cad-autofill` repo | None | None |
@@ -32,12 +32,12 @@ Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
 The same key is used for:
 
-- the crews through CrewAI and LiteLLM: `openrouter/anthropic/claude-haiku-5.5`
-  (extraction) and `openrouter/anthropic/claude-sonnet-5.5` (investigation);
+- the extraction crew through CrewAI and LiteLLM:
+  `openrouter/anthropic/claude-haiku-5.5`;
 - Jev through the TypeSafe SDK with base URL `https://openrouter.ai/api`,
   model `typesafe/jev-1.14`. No TypeSafe account or waitlist is needed.
 
-Expected cost is about $0.02 per shipment (see `docs/design.md`, cost
+Expected cost is about $0.011 per shipment (see `docs/design.md`, cost
 section).
 
 ### Gmail API
@@ -121,6 +121,7 @@ Commands:
 | --- | --- | --- |
 | `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
 | `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx | Not implemented yet (#12) |
+| `python main.py extract inbox/<shipment> --resume` | After a validation failure: apply the person's `corrections.yaml` and continue | Not implemented yet |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
 `main.py` forces CrewAI telemetry and tracing off even if `.env` says

@@ -4,7 +4,6 @@
 models:
   # CrewAI LLM names via LiteLLM: openrouter/<vendor>/<model>
   extraction: openrouter/anthropic/claude-haiku-5.5      # B/L, CI, EMF specialists and reconciler
-  investigation: openrouter/anthropic/claude-sonnet-5.5  # investigator, runs only on validation failure
 
 crews:
   guardrail_max_retries: 3
