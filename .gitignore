@@ -229,4 +229,5 @@ __marimo__/
 /inbox/
 
 # Gmail OAuth client and token
-/secrets/
+/secrets/*
+!/secrets/.gitkeep

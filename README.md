@@ -14,7 +14,7 @@ Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
 | Service | Needed for | Account | Credential | Where it goes |
 | --- | --- | --- | --- | --- |
-| OpenRouter | Extraction crew, investigation crew and Jev | OpenRouter account with credits | API key | `.env`: `OPENROUTER_API_KEY` |
+| OpenRouter | Extraction crew and Jev | OpenRouter account with credits | API key | `.env`: `OPENROUTER_API_KEY` |
 | Gmail API | `main.py fetch` reads shipment emails | Google Cloud project, plus the mailbox that receives the documents | OAuth client (Desktop app) and a saved token | `secrets/gmail_client.json`, `secrets/gmail_token.json` |
 | Candata Global | Header fill and invoice import | Existing broker login on the Candata machine | None. The RPA uses the logged-in client | None |
 | GitHub | Code and issues | Access to the private `PCBZ/cad-autofill` repo | None | None |
@@ -32,12 +32,12 @@ Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
 The same key is used for:
 
-- the crews through CrewAI and LiteLLM: `openrouter/anthropic/claude-haiku-5.5`
-  (extraction) and `openrouter/anthropic/claude-sonnet-5.5` (investigation);
+- the extraction crew through CrewAI and LiteLLM:
+  `openrouter/anthropic/claude-haiku-5.5`;
 - Jev through the TypeSafe SDK with base URL `https://openrouter.ai/api`,
   model `typesafe/jev-1.14`. No TypeSafe account or waitlist is needed.
 
-Expected cost is about $0.02 per shipment (see `docs/design.md`, cost
+Expected cost is about $0.011 per shipment (see `docs/design.md`, cost
 section).
 
 ### Gmail API
@@ -65,7 +65,7 @@ whether the mailbox is on Google Workspace.
 
 In Gmail, create a filter on the senders' addresses that applies the label
 (for example `CAD/Incoming`). Set the same label and the allowed senders in
-`config/settings.yaml`.
+`config/settings.toml`.
 
 ### Where the credentials go
 
@@ -90,6 +90,61 @@ and the model providers behind it, including TypeSafe for Jev. Before
 processing real shipments, get approval under the company's and clients' data
 handling policies. Also confirm with Candata that UI automation of the client
 is allowed under the service agreement (issue in milestone M0).
+
+## Setup
+
+Python 3.11–3.13 (3.12 recommended). 3.11 is the minimum because config files
+are TOML, read with the standard library's `tomllib`; CrewAI does not support
+3.14 yet.
+
+On the computer that runs `fetch` and `extract` (any OS), create a virtual
+environment with an installed 3.11, 3.12 or 3.13 interpreter and activate it.
+
+macOS / Linux (replace `python3.12` with `python3.11` or `python3.13` if that
+is what you have):
+
+```bash
+python3.12 -m venv .venv
+```
+
+```bash
+source .venv/bin/activate
+```
+
+Windows (replace `-3.12` with `-3.11` or `-3.13` if needed):
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+```
+
+Then install the packages:
+
+```bash
+python -m pip install -r requirements-extract.txt
+```
+
+The Candata computer also installs `requirements-fill.txt` (it needs only
+that file if it runs `fill` alone).
+
+Then:
+
+1. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`.
+2. Put the Gmail OAuth client in `secrets/gmail_client.json` (see "Gmail API" above).
+3. Set the Gmail label and `allowed_senders` in `config/settings.toml`.
+
+Commands (with the virtual environment active, so `python` is the `.venv`
+interpreter; without activating, use `.venv/bin/python` or
+`.venv\Scripts\python.exe` instead):
+
+| Command | What it does | Status |
+| --- | --- | --- |
+| `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
+| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Not implemented yet (#12, #36) |
+| `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
+
+`main.py` forces CrewAI telemetry and tracing off even if `.env` says
+otherwise.
 
 ## Step 0: check that Candata's controls can be automated
 
@@ -188,7 +243,7 @@ Open `summary.txt` first.
 
 Send the `summary.txt` files (and the CSVs if the verdict is not GOOD) to the
 developer. They decide how `rpa_filler` and `rpa_importer` locate each field
-and fill `config/header_fields.yaml`.
+and fill `config/header_fields.toml`.
 
 `top classes` in the summary names the UI toolkit (for example
 `WindowsForms10.*`, `Tcx*` for DevExpress VCL). It helps when the verdict is
