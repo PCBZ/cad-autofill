@@ -17,15 +17,28 @@ Run it from the project root:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-gmail-test.txt
-.\.venv\Scripts\python.exe tests\test_gmail_connection.py --client-secrets secrets\gmail_client.json --token-file secrets\gmail_test_token.json
+.\.venv\Scripts\python.exe tests\test_gmail_connection.py --expected-email you@company.com --client-secrets secrets\gmail_client.json --token-file secrets\gmail_test_token.json
 ```
 
 It requires a Desktop app OAuth client JSON at `secrets/gmail_client.json` (an API key
 alone is insufficient). Before connecting, it requires explicit confirmation.
+Replace `you@company.com` with the approved mailbox shown in the confirmation.
+The returned account must match before the token is saved. Cached tokens must
+already be bound to that mailbox and declare only `gmail.metadata`; older unbound
+tokens, missing scopes, and broader scopes are rejected before reuse or refresh.
+For a rejected cache, choose a new, separate test token path and authorize again;
+do not manually relabel its mailbox or scopes. Keep this token separate from the
+`gmail.readonly` token used for message intake.
 It requests Gmail metadata permission and only calls `users.getProfile`; it
 does not list messages, read bodies, download attachments, or send data to AI.
 The local `secrets/gmail_test_token.json` token file is git-ignored. This is a manual live
 connection test, not a mocked unit test, and is not run by GitHub Actions.
+
+Run the separate offline safety regression tests (no Gmail access):
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_gmail_connection_safety.py -v
+```
 
 Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
