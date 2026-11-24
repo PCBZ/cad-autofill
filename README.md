@@ -97,19 +97,35 @@ Python 3.11–3.13 (3.12 recommended). 3.11 is the minimum because config files
 are TOML, read with the standard library's `tomllib`; CrewAI does not support
 3.14 yet.
 
-On the computer that runs `fetch` and `extract` (any OS):
+On the computer that runs `fetch` and `extract` (any OS), create a virtual
+environment with an installed 3.11, 3.12 or 3.13 interpreter and activate it.
+
+macOS / Linux (replace `python3.12` with `python3.11` or `python3.13` if that
+is what you have):
 
 ```bash
 python3.12 -m venv .venv
 ```
 
 ```bash
-.venv/bin/python -m pip install -r requirements-extract.txt
+source .venv/bin/activate
 ```
 
-On Windows the interpreter is `.venv\Scripts\python.exe`. The Candata
-computer also installs `requirements-fill.txt` (it needs only that file if it
-runs `fill` alone).
+Windows (replace `-3.12` with `-3.11` or `-3.13` if needed):
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\activate
+```
+
+Then install the packages:
+
+```bash
+python -m pip install -r requirements-extract.txt
+```
+
+The Candata computer also installs `requirements-fill.txt` (it needs only
+that file if it runs `fill` alone).
 
 Then:
 
@@ -117,7 +133,9 @@ Then:
 2. Put the Gmail OAuth client in `secrets/gmail_client.json` (see "Gmail API" above).
 3. Set the Gmail label and `allowed_senders` in `config/settings.toml`.
 
-Commands:
+Commands (with the virtual environment active, so `python` is the `.venv`
+interpreter; without activating, use `.venv/bin/python` or
+`.venv\Scripts\python.exe` instead):
 
 | Command | What it does | Status |
 | --- | --- | --- |

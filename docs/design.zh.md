@@ -78,11 +78,11 @@ extract（再次）： load → apply_corrections ──────────
 
 | Flow 步骤 | 写法 | 说明 |
 | --- | --- | --- |
-| load | `@start()` + `@router`，代码 | 新运行：pymupdf 读三份 PDF（文字过少判为扫描件，停止转人工），返回 `fresh`。`output/<票号>/corrections.toml` 存在时：读取已保存的 shipment JSON，返回 `resume` |
+| load | `@start()` + `@router`，代码 | 新运行：pymupdf 读三份 PDF（文字过少判为扫描件，停止转人工），返回 `fresh`。`output/<票号>/corrections.toml` 存在时：读取已保存的 `shipment.json`，返回 `resume` |
 | extract | `@listen("fresh")`，抽取 Crew | 输出 shipment JSON |
-| apply_corrections | `@listen("resume")`，代码 | 应用 `corrections.toml` 里的值，标 `source: "human"` |
-| validate | `@router`，监听 `or_(extract, apply_corrections)`，代码 | 返回 `passed` 或 `failed` |
-| write_review | `@listen("failed")`，代码 | 写校验报告和 `corrections.toml`，然后停止 |
+| apply_corrections | `@listen("resume")`，代码 | 应用 `corrections.toml` 里的值（标 `source: "human"`），把接受的问题记入 `review`；保存修正后的 `shipment.json`；把文件改名为 `corrections.<n>.toml`，保证不会被重复应用 |
+| validate | `@router`，监听 `or_(extract, apply_corrections)`，代码 | 没有检查失败，或者每个失败的检查都已在 `review` 里被接受，返回 `passed`；否则返回 `failed` |
+| write_review | `@listen("failed")`，代码 | 保存 `shipment.json`，写校验报告和只列出未解决问题的 `corrections.toml`，然后停止 |
 | classify | `@listen("passed")`，代码 | 调 Jev，不经过 agent |
 | write_excel | `@listen`，代码 | 写 xlsx 和最终校验报告 |
 
@@ -105,10 +105,12 @@ extract（再次）： load → apply_corrections ──────────
 **校验失败的人工处理**（human in the loop）：校验不通过时，Flow 停下来，不让模型去改数据，由人（报关员或操作同事）逐条处理。
 
 1. `write_review` 在 `output/<票号>/` 写出：
-   - `validation_report.md`：每个问题、每份单据上读到的值，以及来自哪份单据哪一页；
-   - `corrections.toml`：每个问题一条，预先填好字段名和读到的值，`value` 留空。
-2. 人对照 PDF 检查。每一条要么在 `value` 填正确的值；要么单据确实不一致、抽取值应保留时，设 `accept: true` 并写 `note`。
-3. 再次运行 `python main.py extract inbox/<票号>`，程序发现填好的 `corrections.toml`，应用修正后重新校验，不会再调用抽取 Crew；还有条目没填时，列出这些条目并停止。通过就继续 classify 和 write_excel；还有问题就重新写出报告和修正文件。
+   - `shipment.json`：抽取得到的 shipment，或前几轮修正后的版本；下一次运行读取的就是它；
+   - `validation_report.md`：每个未解决的问题、每份单据上读到的值，以及来自哪份单据哪一页，另外列出之前已接受的问题；
+   - `corrections.toml`：每个未解决的问题一条，预先填好字段名和读到的值，`value` 留空。
+2. 人对照 PDF 检查。每一条要么在 `value` 填正确的值；要么单据确实不一致、抽取值应保留时，设 `accept = true` 并写 `note`。
+3. 再次运行 `python main.py extract inbox/<票号>`，程序发现填好的 `corrections.toml`。还有条目没填时，列出这些条目并停止。否则应用修正、记录接受的问题，保存修正后的 `shipment.json`（含 `review` 记录），并把文件改名为 `corrections.1.toml`（之后是 `corrections.2.toml`……），然后重新校验，不会再调用抽取 Crew。因为每一轮都先保存 `shipment.json`，前几轮的修正不会丢失。
+4. 没有检查失败，或者每个失败的检查都已被接受，就继续 classify 和 write_excel。还有未解决的问题，就只针对这些问题重新执行第 1 步。
 
 ```toml
 [[correction]]
@@ -127,7 +129,7 @@ note = "freight 20.00 is on the invoice total but not a line"
 ```
 
 - 修正过的值标 `source: "human"`，并记在 shipment JSON 的 `review` 里，含旧值、新值和备注；最终复核截图里标出。
-- 接受（accept）不等于通过：问题保留在报告里，报关员提交前还会再看到。
+- 接受的问题不会阻止流程继续，但也不会被隐藏：它保留在校验报告里，最终复核时标出，报关员提交前还会再看到。接受只对当时的值有效；之后的修正改变了这些值，就重新检查。只有未解决的问题才会让流程停下。
 - `fetch` 和 `extract` 会列出等待人工处理的票，停下来的票不会被遗忘。
 - 要从 PDF 重新开始处理某票货，删除 `output/<票号>/`。
 - 考虑过 AI 排查步骤，最后没有采用：那是唯一由模型改数据的环节，难以测试，而且每票都有报关员复核。如果样本实测（#13）的失败率很高，再在 `write_review` 之前加一个低成本模型的步骤。
@@ -206,7 +208,9 @@ PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断�
   "validation": {"passed": true, "issues": []},
   "review": [
     {"field": "header.gross_weight", "action": "corrected", "old": 12400, "new": 1240,
-     "by": "human", "note": "B/L says 1,240.00 KGS; extraction misread it"}
+     "by": "human", "note": "B/L says 1,240.00 KGS; extraction misread it"},
+    {"field": "invoice_total", "action": "accepted", "values": {"lines_sum": 2480.0, "ci": 2500.0},
+     "by": "human", "note": "freight 20.00 is on the invoice total but not a line"}
   ]
 }
 ```

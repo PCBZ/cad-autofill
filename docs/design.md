@@ -78,11 +78,11 @@ extract (again):   load → apply_corrections ────────→ valida
 
 | Flow step | Implemented as | Notes |
 | --- | --- | --- |
-| load | `@start()` + `@router`, code | Fresh run: pymupdf reads the three PDFs (too little text means a scanned PDF: stop and hand to a person), then `fresh`. If `output/<shipment>/corrections.toml` exists: loads the saved shipment JSON, then `resume` |
+| load | `@start()` + `@router`, code | Fresh run: pymupdf reads the three PDFs (too little text means a scanned PDF: stop and hand to a person), then `fresh`. If `output/<shipment>/corrections.toml` exists: loads the saved `shipment.json`, then `resume` |
 | extract | `@listen("fresh")`, extraction crew | Outputs the shipment JSON |
-| apply_corrections | `@listen("resume")`, code | Applies the values from `corrections.toml`, marked `source: "human"` |
-| validate | `@router` on `or_(extract, apply_corrections)`, code | Returns `passed` or `failed` |
-| write_review | `@listen("failed")`, code | Writes the validation report and `corrections.toml`, then stops |
+| apply_corrections | `@listen("resume")`, code | Applies the values from `corrections.toml` (marked `source: "human"`) and records accepted issues under `review`; saves the amended `shipment.json`; renames the file to `corrections.<n>.toml` so it is never applied twice |
+| validate | `@router` on `or_(extract, apply_corrections)`, code | Returns `passed` when no check fails, or every failed check is accepted in `review`; otherwise `failed` |
+| write_review | `@listen("failed")`, code | Saves `shipment.json`, writes the validation report and a `corrections.toml` listing only the open issues, then stops |
 | classify | `@listen("passed")`, code | Calls Jev directly, not through an agent |
 | write_excel | `@listen`, code | Writes the xlsx and the final validation report |
 
@@ -105,10 +105,12 @@ extract (again):   load → apply_corrections ────────→ valida
 **Human review of validation failures** (human in the loop): when validation fails, the Flow stops instead of asking a model to fix the data. A person (the broker or an operations colleague) resolves each issue.
 
 1. `write_review` writes to `output/<shipment>/`:
-   - `validation_report.md`: each issue, the value found on each document, and the document and page it came from;
-   - `corrections.toml`: one entry per issue, prefilled with the field and the values found, and an empty `value`.
-2. The person checks the PDFs. For each entry they either fill `value` with the correct value, or set `accept: true` with a `note` when the documents really differ and the extracted value should stand.
-3. Running `python main.py extract inbox/<shipment>` again finds the filled-in `corrections.toml`, applies it and validates again without calling the extraction crew. If an entry is still empty, it lists the open entries and stops. If it passes, the Flow continues to classify and write_excel. If issues remain, a new report and corrections file are written.
+   - `shipment.json`: the shipment as extracted, or as amended in earlier rounds; this is what the next run loads;
+   - `validation_report.md`: each open issue, the value found on each document, and the document and page it came from, plus any issues accepted earlier;
+   - `corrections.toml`: one entry per open issue, prefilled with the field and the values found, and an empty `value`.
+2. The person checks the PDFs. For each entry they either fill `value` with the correct value, or set `accept = true` with a `note` when the documents really differ and the extracted value should stand.
+3. Running `python main.py extract inbox/<shipment>` again finds the filled-in `corrections.toml`. If an entry is still empty, it lists the open entries and stops. Otherwise it applies the values, records the accepted issues, saves the amended `shipment.json` with its `review` records, and renames the file to `corrections.1.toml` (then `corrections.2.toml`, …). Then it validates again without calling the extraction crew. Because every round saves `shipment.json` first, corrections from earlier rounds are never lost.
+4. If no check fails, or every failed check is accepted, the Flow continues to classify and write_excel. If open issues remain, step 1 runs again with only those issues.
 
 ```toml
 [[correction]]
@@ -127,7 +129,7 @@ note = "freight 20.00 is on the invoice total but not a line"
 ```
 
 - Corrected values have `source: "human"` and are listed under `review` in the shipment JSON with the old value, new value and note. The final review screenshots highlight them.
-- An accepted issue is not a pass: it stays in the report so the broker sees it again before submission.
+- An accepted issue does not block the run, but it is not hidden: it stays in the validation report and is highlighted at final review, so the broker sees it again before submission. An acceptance holds only for the values it was given for; if a later correction changes them, the check is evaluated again. Only open issues stop the run.
 - `fetch` and `extract` print the shipments waiting for review, so a stopped shipment is not forgotten.
 - To start a shipment over from the PDFs, delete `output/<shipment>/`.
 - An AI investigation step was considered and left out: it is the only place a model would change data, it is hard to test, and the broker reviews every CAD anyway. If the failure rate measured on samples (#13) turns out high, a step on a low-cost model can be added before `write_review`.
@@ -206,7 +208,9 @@ Example (some fields omitted):
   "validation": {"passed": true, "issues": []},
   "review": [
     {"field": "header.gross_weight", "action": "corrected", "old": 12400, "new": 1240,
-     "by": "human", "note": "B/L says 1,240.00 KGS; extraction misread it"}
+     "by": "human", "note": "B/L says 1,240.00 KGS; extraction misread it"},
+    {"field": "invoice_total", "action": "accepted", "values": {"lines_sum": 2480.0, "ci": 2500.0},
+     "by": "human", "note": "freight 20.00 is on the invoice total but not a line"}
   ]
 }
 ```

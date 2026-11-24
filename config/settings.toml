@@ -12,7 +12,7 @@ guardrail_max_retries = 3
 # Pinned: probabilities change between versions, so a new version means
 # retuning the thresholds on the samples. Do not use ~typesafe/jev-latest.
 model = "typesafe/jev-1.14"
-base_url = "https://openrouter.ai/api"
+openrouter_base_url = "https://openrouter.ai/api"  # OpenRouter System One API (TypeSafe SDK base URL)
 
 [jev.thresholds]  # below threshold: leave blank and flag; tune on samples
 document_type = 0.80
