@@ -65,7 +65,7 @@ whether the mailbox is on Google Workspace.
 
 In Gmail, create a filter on the senders' addresses that applies the label
 (for example `CAD/Incoming`). Set the same label and the allowed senders in
-`config/settings.yaml`.
+`config/settings.toml`.
 
 ### Where the credentials go
 
@@ -93,7 +93,9 @@ is allowed under the service agreement (issue in milestone M0).
 
 ## Setup
 
-Python 3.10–3.13 (3.12 recommended; CrewAI does not support 3.14 yet).
+Python 3.11–3.13 (3.12 recommended). 3.11 is the minimum because config files
+are TOML, read with the standard library's `tomllib`; CrewAI does not support
+3.14 yet.
 
 On the computer that runs `fetch` and `extract` (any OS):
 
@@ -113,7 +115,7 @@ Then:
 
 1. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`.
 2. Put the Gmail OAuth client in `secrets/gmail_client.json` (see "Gmail API" above).
-3. Set the Gmail label and `allowed_senders` in `config/settings.yaml`.
+3. Set the Gmail label and `allowed_senders` in `config/settings.toml`.
 
 Commands:
 
@@ -121,7 +123,7 @@ Commands:
 | --- | --- | --- |
 | `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
 | `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx | Not implemented yet (#12) |
-| `python main.py extract inbox/<shipment> --resume` | After a validation failure: apply the person's `corrections.yaml` and continue | Not implemented yet |
+| `python main.py extract inbox/<shipment> --resume` | After a validation failure: apply the person's `corrections.toml` and continue | Not implemented yet |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
 `main.py` forces CrewAI telemetry and tracing off even if `.env` says
@@ -224,7 +226,7 @@ Open `summary.txt` first.
 
 Send the `summary.txt` files (and the CSVs if the verdict is not GOOD) to the
 developer. They decide how `rpa_filler` and `rpa_importer` locate each field
-and fill `config/header_fields.yaml`.
+and fill `config/header_fields.toml`.
 
 `top classes` in the summary names the UI toolkit (for example
 `WindowsForms10.*`, `Tcx*` for DevExpress VCL). It helps when the verdict is

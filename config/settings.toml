@@ -1,0 +1,43 @@
+# cad-autofill settings. Secrets do not go here: the OpenRouter key is in .env,
+# Gmail credentials are in secrets/. See docs/design.md for what each part does.
+
+[models]
+# CrewAI LLM names via LiteLLM: openrouter/<vendor>/<model>
+extraction = "openrouter/anthropic/claude-haiku-5.5"  # B/L, CI, EMF specialists and reconciler
+
+[crews]
+guardrail_max_retries = 3
+
+[jev]
+# Pinned: probabilities change between versions, so a new version means
+# retuning the thresholds on the samples. Do not use ~typesafe/jev-latest.
+model = "typesafe/jev-1.14"
+base_url = "https://openrouter.ai/api"
+
+[jev.thresholds]  # below threshold: leave blank and flag; tune on samples
+document_type = 0.80
+hs_check = 0.80
+hs_suggestion = 0.80
+unit_mapping = 0.80
+
+[gmail]
+label = "CAD/Incoming"   # applied by a Gmail filter on the senders' addresses
+allowed_senders = []     # e.g. ["docs@client.example"]; empty means nothing is fetched
+merge_by_thread = false  # merge documents sent in several emails of one thread
+client_file = "secrets/gmail_client.json"
+token_file = "secrets/gmail_token.json"
+state_file = "output/gmail_state.json"
+
+[validation]
+amount_tolerance = 0.01  # allowed difference between sum of lines and invoice total
+
+[text]
+min_chars_per_page = 50  # less text than this: treat as a scanned PDF, hand to a person
+
+[paths]
+inbox = "inbox"
+output = "output"
+
+[timeouts]
+control_wait_seconds = 10  # RPA: wait for a control to appear
+import_wait_seconds = 60   # RPA: wait for the Excel import to finish

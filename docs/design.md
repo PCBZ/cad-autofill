@@ -39,8 +39,8 @@ The system has seven modules. The first four do not depend on Candata and can be
 | --- | --- | --- | --- |
 | gmail_reader | Gmail label | `inbox/<shipment>/` with PDFs and `email.json` | Gmail API with the read-only scope; one email is one shipment; only allowed senders; processed message IDs kept locally (see "Gmail intake" below) |
 | extraction crew | Three PDFs | Shipment JSON | pymupdf reads the PDF text layer; `find_tables()` keeps the rows and columns of invoice tables. B/L, CI and EMF specialist agents extract in parallel and a reconciler agent merges, by default on Claude Haiku 5.5 through OpenRouter. Every task constrains its output with `output_pydantic` and checks format with a `guardrail`. Every field records its source document |
-| validator | Shipment JSON | Validation report; on failure also `corrections.yaml` | Plain code. Sum of line amounts = invoice total; B/L number, packages, gross weight and consignee agree across the three documents. On failure the run stops for a person (see "Human review of validation failures") |
-| excel_writer | Lines part | Import xlsx | Column order and formats follow the Candata template, configured in YAML |
+| validator | Shipment JSON | Validation report; on failure also `corrections.toml` | Plain code. Sum of line amounts = invoice total; B/L number, packages, gross weight and consignee agree across the three documents. On failure the run stops for a person (see "Human review of validation failures") |
+| excel_writer | Lines part | Import xlsx | Column order and formats follow the Candata template, configured in TOML |
 | rpa_filler | Header part | Filled shipment screen | pywinauto locates controls; `click_input()` + `type_keys()` act like a real user; every field is read back after typing |
 | rpa_importer | xlsx path | Imported product lines | Clicks the import button and enters the path in the file dialog; checks the row count after import |
 | reviewer | All results | Screenshots + log | Stops before submission for the broker to confirm |
@@ -58,10 +58,10 @@ Drop-downs and autocomplete fields (country codes, port codes, currency) are han
 `python main.py fetch` reads shipment emails and turns each into a folder in `inbox/` for `extract`. It is plain code, not an agent tool: reading the mailbox needs no model judgment.
 
 - **Access**: Gmail API with OAuth and the `gmail.readonly` scope. The program cannot send, delete, or relabel mail. The OAuth client file and the saved token are kept in `secrets/`, which is not committed.
-- **What it reads**: messages under the label set in `settings.yaml` (for example `CAD/Incoming`, applied by a Gmail filter on the sender addresses), received after the last run, from senders on the allowlist in `settings.yaml`. Other messages are skipped and listed in the fetch log.
+- **What it reads**: messages under the label set in `settings.toml` (for example `CAD/Incoming`, applied by a Gmail filter on the sender addresses), received after the last run, from senders on the allowlist in `settings.toml`. Other messages are skipped and listed in the fetch log.
 - **What it writes**: `inbox/<YYYYMMDD>-<message id>/` with every PDF attachment and an `email.json` holding the message ID, thread ID, sender, subject, received time and plain-text body.
 - **Processed messages**: with a read-only scope the program cannot mark mail as done, so processed message IDs are kept in `output/gmail_state.json`. Running `fetch` again never creates a second folder for the same message.
-- **One email, one shipment**: this is the default. Emails with no PDF, or with more or fewer than three documents, are still saved but flagged; Jev's document type check then reports which document is missing or extra. Documents split across several emails in one thread are merged by thread ID when `settings.yaml` turns that on.
+- **One email, one shipment**: this is the default. Emails with no PDF, or with more or fewer than three documents, are still saved but flagged; Jev's document type check then reports which document is missing or extra. Documents split across several emails in one thread are merged by thread ID when `settings.toml` turns that on.
 - **Other attachments**: only PDFs are read. Zip files, images, and links to shared drives are not opened; the email is flagged for a person.
 - **Email body**: passed to the reconciler as extra context, mainly for client references and instructions. A header value taken from the body has `source: "email"` and is highlighted at review. Body text, like PDF text, is treated as data: agents have no tools, so text that tries to instruct the model cannot trigger any action.
 - **Account type**: if the mailbox is on Google Workspace, set the OAuth consent screen to Internal: no Google verification is needed and the token does not expire weekly. A personal @gmail.com account can only use an External app in Testing mode, where the token expires every 7 days and someone has to sign in again; for that case, IMAP with an app password is the fallback.
@@ -72,7 +72,7 @@ The order of steps is fixed, so a Flow chains them. Only extraction needs model 
 
 ```
 extract:           load → extract (extraction crew) → validate ─ passed ─→ classify (Jev) → write_excel → end
-                                                               └ failed → write_review → stop; a person fills corrections.yaml
+                                                               └ failed → write_review → stop; a person fills corrections.toml
 extract --resume:  load → apply_corrections ────────→ validate → …
 ```
 
@@ -80,9 +80,9 @@ extract --resume:  load → apply_corrections ────────→ valida
 | --- | --- | --- |
 | load | `@start()` + `@router`, code | Fresh run: pymupdf reads the three PDFs (too little text means a scanned PDF: stop and hand to a person), then `fresh`. With `--resume`: loads the saved shipment JSON, then `resume` |
 | extract | `@listen("fresh")`, extraction crew | Outputs the shipment JSON |
-| apply_corrections | `@listen("resume")`, code | Applies the values from `corrections.yaml`, marked `source: "human"` |
+| apply_corrections | `@listen("resume")`, code | Applies the values from `corrections.toml`, marked `source: "human"` |
 | validate | `@router` on `or_(extract, apply_corrections)`, code | Returns `passed` or `failed` |
-| write_review | `@listen("failed")`, code | Writes the validation report and `corrections.yaml`, then stops |
+| write_review | `@listen("failed")`, code | Writes the validation report and `corrections.toml`, then stops |
 | classify | `@listen("passed")`, code | Calls Jev directly, not through an agent |
 | write_excel | `@listen`, code | Writes the xlsx and the final validation report |
 
@@ -106,21 +106,24 @@ extract --resume:  load → apply_corrections ────────→ valida
 
 1. `write_review` writes to `output/<shipment>/`:
    - `validation_report.md`: each issue, the value found on each document, and the document and page it came from;
-   - `corrections.yaml`: one entry per issue, prefilled with the field and the values found, and an empty `value`.
+   - `corrections.toml`: one entry per issue, prefilled with the field and the values found, and an empty `value`.
 2. The person checks the PDFs. For each entry they either fill `value` with the correct value, or set `accept: true` with a `note` when the documents really differ and the extracted value should stand.
 3. `python main.py extract inbox/<shipment> --resume` applies the corrections and validates again without calling the extraction crew. If it passes, the Flow continues to classify and write_excel. If issues remain, a new report and corrections file are written.
 
-```yaml
-- field: header.gross_weight
-  issue: B/L and EMF disagree
-  found: {bl: 12400, emf: 1240}
-  value: 1240
-  note: B/L says 1,240.00 KGS; extraction misread it
-- field: invoice_total
-  issue: sum of lines 2,480.00 does not equal invoice total 2,500.00
-  found: {lines_sum: 2480.0, ci: 2500.0}
-  accept: true
-  note: freight 20.00 is on the invoice total but not a line
+```toml
+[[correction]]
+field = "header.gross_weight"
+issue = "B/L and EMF disagree"
+found = { bl = 12400, emf = 1240 }
+value = 1240
+note = "B/L says 1,240.00 KGS; extraction misread it"
+
+[[correction]]
+field = "invoice_total"
+issue = "sum of lines 2,480.00 does not equal invoice total 2,500.00"
+found = { lines_sum = 2480.0, ci = 2500.0 }
+accept = true
+note = "freight 20.00 is on the invoice total but not a line"
 ```
 
 - Corrected values have `source: "human"` and are listed under `review` in the shipment JSON with the old value, new value and note. The final review screenshots highlight them.
@@ -130,8 +133,8 @@ extract --resume:  load → apply_corrections ────────→ valida
 
 **Configuration**
 
-- Each crew keeps its agents' role, goal and backstory and its task descriptions in its own `config/agents.yaml` and `config/tasks.yaml` (the layout generated by `crewai create crew <name> --classic`). The model for each agent is set in `settings.yaml`.
-- All models go through OpenRouter with one `OPENROUTER_API_KEY`. CrewAI's `LLM` class reaches OpenRouter through LiteLLM (`crewai[litellm]`). Model names have the form `openrouter/<vendor>/<model>`: `openrouter/anthropic/claude-haiku-5.5` for the extraction crew. Switching to another vendor's model only changes `settings.yaml`.
+- Each crew keeps its agents' role, goal and backstory and its task descriptions in its own `config/agents.toml` and `config/tasks.toml`; code reads them with `tomllib` and passes the text to CrewAI's `Agent` and `Task`, so CrewAI's YAML-based `@CrewBase` loader is not used. The model for each agent is set in `settings.toml`.
+- All models go through OpenRouter with one `OPENROUTER_API_KEY`. CrewAI's `LLM` class reaches OpenRouter through LiteLLM (`crewai[litellm]`). Model names have the form `openrouter/<vendor>/<model>`: `openrouter/anthropic/claude-haiku-5.5` for the extraction crew. Switching to another vendor's model only changes `settings.toml`.
 - In the OpenRouter account's privacy settings, allow only providers that do not train on prompts, and set a credit limit on the key.
 - Telemetry and tracing are turned off in `.env`: `CREWAI_DISABLE_TELEMETRY=true`, `OTEL_SDK_DISABLED=true`, `CREWAI_TRACING_ENABLED=false`. Traces can contain prompts and document content and must not be uploaded.
 
@@ -149,7 +152,7 @@ After pymupdf extracts the text and the extraction crew turns it into JSON, clas
 | Unit mapping | Choice | Unit on the CI + Candata unit code table | Written into the import Excel |
 
 - A Choice allows at most 255 options, so HS suggestions must be chosen layer by layer. The candidates for each layer come from the Canadian Customs Tariff and need to be prepared as local data files in `config/tariff/`.
-- Every answer has a confidence. Below the threshold, the field is left blank and marked red. The threshold is set in `settings.yaml` and tuned on sample shipments.
+- Every answer has a confidence. Below the threshold, the field is left blank and marked red. The threshold is set in `settings.toml` and tuned on sample shipments.
 - **Access through OpenRouter**: Jev is on OpenRouter with no waitlist and no TypeSafe account, using the same `OPENROUTER_API_KEY` and billed to the same account. The price is the same as from TypeSafe: $0.042 per million input tokens, output free. `classifier/jev.py` uses the TypeSafe Python SDK with its base URL set to `https://openrouter.ai/api` (OpenRouter's System One API). Jev is not a chat model and does not work through the chat completions endpoint, so it is not called through CrewAI.
 - **Pin the model version**: use `typesafe/jev-1.14`, not the `~typesafe/jev-latest` alias. Probabilities change between versions, so a new version means tuning the thresholds again on the samples.
 - **Keep requests small**: requests over about 32,000 bytes of text run in TypeSafe's long-context mode, which is slower and less accurate. Send one invoice line per HS request and one layer per HS suggestion step.
@@ -209,7 +212,7 @@ Example (some fields omitted):
 
 ## Dependencies
 
-The runtime is Windows 10/11 with 64-bit Python 3.10–3.13 (3.12 recommended; CrewAI currently requires >=3.10,<3.14), plus an OpenRouter API key and a Gmail OAuth client. The versions below are minimums; pin exact versions once integration testing passes.
+The runtime is Windows 10/11 with 64-bit Python 3.11–3.13 (3.12 recommended; 3.11 is the first with `tomllib` in the standard library, and CrewAI currently requires <3.14), plus an OpenRouter API key and a Gmail OAuth client. The versions below are minimums; pin exact versions once integration testing passes.
 
 ### Python packages
 
@@ -226,10 +229,10 @@ The runtime is Windows 10/11 with 64-bit Python 3.10–3.13 (3.12 recommended; C
 | pyautogui | 0.9.54 | Coordinate-click fallback, screenshots | rpa_filler, reviewer |
 | Pillow | 10.0 | Save and process screenshots | reviewer |
 | keyboard | 0.13.5 | Global emergency stop hotkey (Esc) | rpa_filler |
-| PyYAML | 6.0 | Read field mappings and UI locator config | all |
+| tomli-w | 1.0 | Write `corrections.toml` (reading TOML uses the standard library's `tomllib`) | review |
 | python-dotenv | 1.0 | Read credentials and CrewAI environment variables from `.env` | flow, classifier |
 
-crewai is installed with the `litellm` extra, since all models go through OpenRouter. The model for each agent is set in `settings.yaml`, so switching models only changes config. The classifier still defines a common interface so another decision model on OpenRouter can replace Jev if needed. When a scanned PDF has no readable text, the default is to hand it to a person. If scanned PDFs turn out to be common, add the free local PaddleOCR (`paddleocr` + `paddlepaddle`) as a fallback.
+crewai is installed with the `litellm` extra, since all models go through OpenRouter. The model for each agent is set in `settings.toml`, so switching models only changes config. The classifier still defines a common interface so another decision model on OpenRouter can replace Jev if needed. When a scanned PDF has no readable text, the default is to hand it to a person. If scanned PDFs turn out to be common, add the free local PaddleOCR (`paddleocr` + `paddlepaddle`) as a fallback.
 
 Dependencies are split into two files: extraction can run on any computer, and a Candata computer that only fills forms does not need CrewAI.
 
@@ -252,7 +255,7 @@ typesafe-sdk>=0.7.5          # Jev via OpenRouter
 
 pydantic>=2.5
 openpyxl>=3.1
-PyYAML>=6.0
+tomli-w>=1.0                 # write corrections.toml (reading TOML uses stdlib tomllib)
 python-dotenv>=1.0
 ```
 
@@ -264,7 +267,6 @@ pywinauto>=0.6.8
 pyautogui>=0.9.54
 Pillow>=10.0
 keyboard>=0.13.5
-PyYAML>=6.0
 ```
 
 Install (install both when both stages run on the same computer):
@@ -295,15 +297,15 @@ Sign-up steps and `.env` variable names are in the README, section "Accounts and
 
 ## Project structure and configuration
 
-Field mappings, UI locators and Excel column order all live in YAML under `config/`. When the Candata screens or template change, only config changes, not code. Agent and task prompts live in each crew's own `config/`.
+Field mappings, UI locators and Excel column order all live in TOML files under `config/`. When the Candata screens or template change, only config changes, not code. Agent and task prompts live in each crew's own `config/`.
 
 ```
 cad-autofill/
 ├── config/
-│   ├── settings.yaml        # model per agent, Jev version, guardrail retries, confidence thresholds,
+│   ├── settings.toml        # model per agent, Jev version, guardrail retries, confidence thresholds,
 │   │                        # Gmail label and sender allowlist, folders, timeouts
-│   ├── header_fields.yaml   # JSON field → Candata control locator → format rules
-│   ├── excel_template.yaml  # column order and formats of the Candata invoice import template
+│   ├── header_fields.toml   # JSON field → Candata control locator → format rules
+│   ├── excel_template.toml  # column order and formats of the Candata invoice import template
 │   └── tariff/              # layered Canadian Customs Tariff candidates, Candata unit code table
 ├── src/
 │   ├── gmail_reader.py      # fetch: Gmail label → inbox/<shipment>/ (PDFs + email.json)
@@ -313,11 +315,11 @@ cad-autofill/
 │   ├── flow.py              # ShipmentFlow: load → extract → validate → classify → write_excel
 │   ├── crews/
 │   │   └── extraction/
-│   │       ├── config/agents.yaml   # B/L, CI and EMF specialists and reconciler
-│   │       ├── config/tasks.yaml
+│   │       ├── config/agents.toml   # B/L, CI and EMF specialists and reconciler
+│   │       ├── config/tasks.toml
 │   │       ├── guardrails.py        # required-field and format checks
 │   │       └── crew.py
-│   ├── review.py            # validation report, corrections.yaml, applying corrections on --resume
+│   ├── review.py            # validation report, corrections.toml, applying corrections on --resume
 │   ├── classifier/
 │   │   ├── base.py          # classifier interface: document type, HS check and suggestion, unit mapping
 │   │   └── jev.py
@@ -340,17 +342,18 @@ cad-autofill/
                              # CREWAI_TRACING_ENABLED; not committed
 ```
 
-`header_fields.yaml` example:
+`header_fields.toml` example:
 
-```yaml
-bl_number:
-  locator: {auto_id: "txtBillOfLading"}   # to be confirmed by the control scan
-  fallback: {tab_from: "txtShipmentNo", tabs: 3}
-  type: text
-port_of_entry:
-  locator: {title: "Port", control_type: "ComboBox"}
-  type: combobox                           # type, wait for candidates, pick the exact match
-  format: "{value:0>4}"
+```toml
+[bl_number]
+locator = { auto_id = "txtBillOfLading" }  # to be confirmed by the control scan
+fallback = { tab_from = "txtShipmentNo", tabs = 3 }
+type = "text"
+
+[port_of_entry]
+locator = { title = "Port", control_type = "ComboBox" }
+type = "combobox"  # type, wait for candidates, pick the exact match
+format = "{value:0>4}"
 ```
 
 There are three commands. `python main.py fetch` pulls new shipment emails from Gmail into `inbox/`. `python main.py extract inbox/<shipment>` runs ShipmentFlow: it only extracts and generates the Excel file, and can run on any computer. After a validation failure, `python main.py extract inbox/<shipment> --resume` continues from the person's corrections. `python main.py fill inbox/<shipment>` runs on the Candata computer: it fills the form and imports the lines, reading the JSON and xlsx produced by `extract`, and does not use CrewAI.
@@ -424,7 +427,7 @@ Development order:
 
 1. Flow skeleton + extraction crew + validator + excel_writer: run samples from extraction to xlsx and verify by importing by hand.
 2. gmail_reader: fetch real shipment emails into `inbox/` and run `extract` on them.
-3. Human review loop: validation report, `corrections.yaml` and `--resume`, tested on samples with real conflicts or deliberately corrupted values.
+3. Human review loop: validation report, `corrections.toml` and `--resume`, tested on samples with real conflicts or deliberately corrupted values.
 4. rpa_importer: automate the Excel import. This step has few UI actions, so it is a good first test of RPA feasibility.
 5. rpa_filler: add header fields step by step, text boxes first, then drop-downs and autocomplete.
 6. reviewer + end-to-end wiring, then a small pilot batch.

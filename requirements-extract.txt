@@ -1,4 +1,4 @@
-# main.py fetch and main.py extract. Runs on any computer.
+# main.py fetch and main.py extract. Runs on any computer. Python 3.11-3.13.
 # Minimum versions; pinned after integration testing (issue #14).
 
 # Gmail intake
@@ -17,5 +17,5 @@ typesafe-sdk>=0.7.5          # Jev via OpenRouter
 
 pydantic>=2.5
 openpyxl>=3.1
-PyYAML>=6.0
+tomli-w>=1.0                 # write corrections.toml (reading TOML uses stdlib tomllib)
 python-dotenv>=1.0

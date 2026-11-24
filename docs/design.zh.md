@@ -39,8 +39,8 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 | --- | --- | --- | --- |
 | gmail_reader 收件 | Gmail 标签 | `inbox/<票号>/`，含 PDF 和 `email.json` | Gmail API，只读权限；一封邮件对应一票货；只收允许的发件人；已处理的邮件 ID 存在本地（见下面"Gmail 收件"） |
 | extraction crew 抽取 | 三份 PDF | shipment JSON | pymupdf 读 PDF 文字层，用 find_tables() 保留发票表格行列；B/L、CI、EMF 三个专员 agent 并行抽取，核对员 agent 汇总，默认通过 OpenRouter 用 Claude Haiku 5.5；每个任务用 output_pydantic 约束输出、guardrail 检查格式；每个字段记录来源单据 |
-| validator 校验 | shipment JSON | 校验报告；不通过时另有 `corrections.yaml` | 纯代码。明细金额合计 = 发票总额；提单号、件数、毛重、收货人在三份单据间一致。不通过就停下来交给人处理（见"校验失败的人工处理"） |
-| excel_writer 生成 Excel | 明细部分 | 导入用 xlsx | 列顺序和格式按 Candata 模板，由 YAML 配置 |
+| validator 校验 | shipment JSON | 校验报告；不通过时另有 `corrections.toml` | 纯代码。明细金额合计 = 发票总额；提单号、件数、毛重、收货人在三份单据间一致。不通过就停下来交给人处理（见"校验失败的人工处理"） |
+| excel_writer 生成 Excel | 明细部分 | 导入用 xlsx | 列顺序和格式按 Candata 模板，由 TOML 配置 |
 | rpa_filler 填表 | 表头部分 | 已填好的 shipment 界面 | pywinauto 定位控件，`click_input()` + `type_keys()` 模拟真人；每个字段填完回读核对 |
 | rpa_importer 导入 | xlsx 路径 | 已导入的产品行 | 点击导入按钮，在文件对话框填路径；导入后核对行数 |
 | reviewer 复核留痕 | 全部结果 | 截图 + 日志 | 停在提交前，由报关员确认 |
@@ -58,10 +58,10 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 `python main.py fetch` 读取单据邮件，每封转成 `inbox/` 下的一个文件夹，供 `extract` 使用。它是普通代码，不是 agent 工具：读邮箱不需要模型判断。
 
 - **权限**：Gmail API + OAuth，scope 为 `gmail.readonly`。程序不能发信、删信或改标签。OAuth 客户端文件和保存的 token 放在 `secrets/`，不进版本库。
-- **读哪些邮件**：`settings.yaml` 里设定的标签（例如 `CAD/Incoming`，由 Gmail 按发件人地址设置的过滤器自动加上）下、上次运行之后收到、发件人在 `settings.yaml` 允许列表里的邮件。其他邮件跳过，并记在收件日志里。
+- **读哪些邮件**：`settings.toml` 里设定的标签（例如 `CAD/Incoming`，由 Gmail 按发件人地址设置的过滤器自动加上）下、上次运行之后收到、发件人在 `settings.toml` 允许列表里的邮件。其他邮件跳过，并记在收件日志里。
 - **写出什么**：`inbox/<YYYYMMDD>-<邮件 ID>/`，里面是全部 PDF 附件和一个 `email.json`，记录邮件 ID、会话 ID、发件人、主题、收件时间和纯文本正文。
 - **已处理记录**：只读权限无法给邮件打"已处理"标记，所以已处理的邮件 ID 存在 `output/gmail_state.json`。重复运行 `fetch` 不会为同一封邮件建第二个文件夹。
-- **一封邮件一票货**：这是默认规则。没有 PDF、或单据多于或少于三份的邮件照样保存但会标出；之后 Jev 的单据类型识别会指出缺了哪份或多了哪份。同一会话里分几封发来的单据，在 `settings.yaml` 打开后按会话 ID 合并。
+- **一封邮件一票货**：这是默认规则。没有 PDF、或单据多于或少于三份的邮件照样保存但会标出；之后 Jev 的单据类型识别会指出缺了哪份或多了哪份。同一会话里分几封发来的单据，在 `settings.toml` 打开后按会话 ID 合并。
 - **其他附件**：只读取 PDF。压缩包、图片和共享网盘链接不打开，邮件标出交给人工。
 - **邮件正文**：作为补充上下文交给核对员，主要用于客户参考号和备注。取自正文的表头值标 `source: "email"`，复核时标出。正文和 PDF 文字一样只当数据处理：agent 没有任何工具，试图指挥模型的文字触发不了任何操作。
 - **账号类型**：邮箱在 Google Workspace 上时，OAuth 同意屏幕设为 Internal：不需要 Google 审核，token 也不会每周过期。个人 @gmail.com 只能用 External 应用的 Testing 模式，token 每 7 天过期一次，需要重新登录；这种情况用 IMAP + 应用专用密码作备选。
@@ -72,7 +72,7 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 
 ```
 extract：          load → extract（抽取 Crew）→ validate ─ 通过 ─→ classify（Jev）→ write_excel → 结束
-                                                         └ 不通过 → write_review → 停止，由人填写 corrections.yaml
+                                                         └ 不通过 → write_review → 停止，由人填写 corrections.toml
 extract --resume： load → apply_corrections ───────────→ validate → …
 ```
 
@@ -80,9 +80,9 @@ extract --resume： load → apply_corrections ───────────
 | --- | --- | --- |
 | load | `@start()` + `@router`，代码 | 新运行：pymupdf 读三份 PDF（文字过少判为扫描件，停止转人工），返回 `fresh`。带 `--resume`：读取已保存的 shipment JSON，返回 `resume` |
 | extract | `@listen("fresh")`，抽取 Crew | 输出 shipment JSON |
-| apply_corrections | `@listen("resume")`，代码 | 应用 `corrections.yaml` 里的值，标 `source: "human"` |
+| apply_corrections | `@listen("resume")`，代码 | 应用 `corrections.toml` 里的值，标 `source: "human"` |
 | validate | `@router`，监听 `or_(extract, apply_corrections)`，代码 | 返回 `passed` 或 `failed` |
-| write_review | `@listen("failed")`，代码 | 写校验报告和 `corrections.yaml`，然后停止 |
+| write_review | `@listen("failed")`，代码 | 写校验报告和 `corrections.toml`，然后停止 |
 | classify | `@listen("passed")`，代码 | 调 Jev，不经过 agent |
 | write_excel | `@listen`，代码 | 写 xlsx 和最终校验报告 |
 
@@ -106,21 +106,24 @@ extract --resume： load → apply_corrections ───────────
 
 1. `write_review` 在 `output/<票号>/` 写出：
    - `validation_report.md`：每个问题、每份单据上读到的值，以及来自哪份单据哪一页；
-   - `corrections.yaml`：每个问题一条，预先填好字段名和读到的值，`value` 留空。
+   - `corrections.toml`：每个问题一条，预先填好字段名和读到的值，`value` 留空。
 2. 人对照 PDF 检查。每一条要么在 `value` 填正确的值；要么单据确实不一致、抽取值应保留时，设 `accept: true` 并写 `note`。
 3. `python main.py extract inbox/<票号> --resume` 应用修正后重新校验，不会再调用抽取 Crew。通过就继续 classify 和 write_excel；还有问题就重新写出报告和修正文件。
 
-```yaml
-- field: header.gross_weight
-  issue: B/L and EMF disagree
-  found: {bl: 12400, emf: 1240}
-  value: 1240
-  note: B/L says 1,240.00 KGS; extraction misread it
-- field: invoice_total
-  issue: sum of lines 2,480.00 does not equal invoice total 2,500.00
-  found: {lines_sum: 2480.0, ci: 2500.0}
-  accept: true
-  note: freight 20.00 is on the invoice total but not a line
+```toml
+[[correction]]
+field = "header.gross_weight"
+issue = "B/L and EMF disagree"
+found = { bl = 12400, emf = 1240 }
+value = 1240
+note = "B/L says 1,240.00 KGS; extraction misread it"
+
+[[correction]]
+field = "invoice_total"
+issue = "sum of lines 2,480.00 does not equal invoice total 2,500.00"
+found = { lines_sum = 2480.0, ci = 2500.0 }
+accept = true
+note = "freight 20.00 is on the invoice total but not a line"
 ```
 
 - 修正过的值标 `source: "human"`，并记在 shipment JSON 的 `review` 里，含旧值、新值和备注；最终复核截图里标出。
@@ -130,8 +133,8 @@ extract --resume： load → apply_corrections ───────────
 
 **配置**
 
-- agent 的 role、goal、backstory 和任务描述放在各 crew 的 `config/agents.yaml`、`config/tasks.yaml`（`crewai create crew <name> --classic` 生成的结构）；每个 agent 用哪个模型写在 `settings.yaml`。
-- 所有模型都走 OpenRouter，只用一个 `OPENROUTER_API_KEY`。CrewAI 的 `LLM` 类通过 LiteLLM（`crewai[litellm]`）调用 OpenRouter，模型名写成 `openrouter/<vendor>/<model>`：抽取 Crew 用 `openrouter/anthropic/claude-haiku-5.5`。换其他厂商的模型只改 `settings.yaml`。
+- agent 的 role、goal、backstory 和任务描述放在各 crew 的 `config/agents.toml`、`config/tasks.toml`，由代码用 `tomllib` 读取后传给 CrewAI 的 `Agent` 和 `Task`，不使用 CrewAI 基于 YAML 的 `@CrewBase` 加载方式；每个 agent 用哪个模型写在 `settings.toml`。
+- 所有模型都走 OpenRouter，只用一个 `OPENROUTER_API_KEY`。CrewAI 的 `LLM` 类通过 LiteLLM（`crewai[litellm]`）调用 OpenRouter，模型名写成 `openrouter/<vendor>/<model>`：抽取 Crew 用 `openrouter/anthropic/claude-haiku-5.5`。换其他厂商的模型只改 `settings.toml`。
 - 在 OpenRouter 账号的隐私设置里只允许不用提示词训练的提供方，并给 key 设额度上限。
 - 关闭遥测和 tracing：`.env` 里设 `CREWAI_DISABLE_TELEMETRY=true`、`OTEL_SDK_DISABLED=true`、`CREWAI_TRACING_ENABLED=false`。tracing 记录可能包含提示词和单据内容，不能上传。
 
@@ -149,7 +152,7 @@ PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断�
 | 计量单位映射 | Choice | CI 上的单位 + Candata 单位代码表 | 写入导入 Excel |
 
 - 一个 Choice 最多 255 个选项，所以 HS 建议必须逐层选；每层候选来自加拿大海关税则（Customs Tariff），需要整理成本地数据文件放在 `config/tariff/`。
-- 每个答案带置信度，低于阈值就留空并标红；阈值写在 settings.yaml，用样本资料调。
+- 每个答案带置信度，低于阈值就留空并标红；阈值写在 settings.toml，用样本资料调。
 - **通过 OpenRouter 调用**：Jev 已上架 OpenRouter，不用排队，也不需要 TypeSafe 账号，用同一个 `OPENROUTER_API_KEY`，计入同一个账户。价格与 TypeSafe 官方相同：输入每百万 token $0.042，输出免费。`classifier/jev.py` 用 TypeSafe Python SDK，把 base URL 设为 `https://openrouter.ai/api`（OpenRouter 的 System One API）。Jev 不是聊天模型，不能走 chat completions 接口，所以不经过 CrewAI 调用。
 - **锁定模型版本**：用 `typesafe/jev-1.14`，不用 `~typesafe/jev-latest` 别名。不同版本的概率分布不同，换版本就要用样本重新调阈值。
 - **请求要小**：文字超过约 32,000 字节的请求会进入 TypeSafe 的长上下文模式，更慢也更不准。HS 核对每次只发一行明细，HS 建议每次只问一层。
@@ -209,7 +212,7 @@ PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断�
 
 ## 依赖
 
-运行环境是 Windows 10/11 + Python 3.10–3.13（64 位，建议 3.12；CrewAI 当前要求 >=3.10,<3.14），外加一个 OpenRouter API key 和一个 Gmail OAuth 客户端；下表版本号为最低要求，联调通过后应锁定具体版本。
+运行环境是 Windows 10/11 + Python 3.11–3.13（64 位，建议 3.12；3.11 起标准库自带 `tomllib`，CrewAI 当前要求 <3.14），外加一个 OpenRouter API key 和一个 Gmail OAuth 客户端；下表版本号为最低要求，联调通过后应锁定具体版本。
 
 ### Python 包
 
@@ -226,10 +229,10 @@ PDF 经 pymupdf 提取文字、由抽取 Crew 整理成 JSON 后，分类判断�
 | pyautogui | 0.9.54 | 坐标点击后备方案、屏幕截图 | rpa_filler、reviewer |
 | Pillow | 10.0 | 保存和处理截图 | reviewer |
 | keyboard | 0.13.5 | 全局紧急停止热键（Esc） | rpa_filler |
-| PyYAML | 6.0 | 读取字段映射和界面定位配置 | 全部 |
+| tomli-w | 1.0 | 写 `corrections.toml`（读取 TOML 用标准库 `tomllib`） | review |
 | python-dotenv | 1.0 | 从 .env 读取凭据和 CrewAI 环境变量 | flow、classifier |
 
-所有模型都走 OpenRouter，所以 crewai 装 `litellm` extra。每个 agent 的模型写在 settings.yaml，换模型只改配置；classifier 仍定义统一接口，需要时可以换成 OpenRouter 上的其他决策模型。扫描件读不出文字时默认转人工；如果扫描件多，再加入本地免费的 PaddleOCR（`paddleocr` + `paddlepaddle`）作备选。
+所有模型都走 OpenRouter，所以 crewai 装 `litellm` extra。每个 agent 的模型写在 settings.toml，换模型只改配置；classifier 仍定义统一接口，需要时可以换成 OpenRouter 上的其他决策模型。扫描件读不出文字时默认转人工；如果扫描件多，再加入本地免费的 PaddleOCR（`paddleocr` + `paddlepaddle`）作备选。
 
 依赖分成两个文件：抽取那一段可以在任何电脑上跑，Candata 电脑只做填表时不必装 CrewAI。
 
@@ -252,7 +255,7 @@ typesafe-sdk>=0.7.5          # Jev via OpenRouter
 
 pydantic>=2.5
 openpyxl>=3.1
-PyYAML>=6.0
+tomli-w>=1.0                 # write corrections.toml (reading TOML uses stdlib tomllib)
 python-dotenv>=1.0
 ```
 
@@ -264,7 +267,6 @@ pywinauto>=0.6.8
 pyautogui>=0.9.54
 Pillow>=10.0
 keyboard>=0.13.5
-PyYAML>=6.0
 ```
 
 安装（两段都在同一台电脑上跑时两个都装）：
@@ -295,15 +297,15 @@ python -m venv .venv
 
 ## 项目结构与配置
 
-字段映射、界面定位和 Excel 列顺序都放在 `config/` 的 YAML 里，Candata 界面或模板变了只改配置，不改代码。agent 和任务的提示词放在各 crew 自己的 `config/` 里。
+字段映射、界面定位和 Excel 列顺序都放在 `config/` 的 TOML 文件里，Candata 界面或模板变了只改配置，不改代码。agent 和任务的提示词放在各 crew 自己的 `config/` 里。
 
 ```
 cad-autofill/
 ├── config/
-│   ├── settings.yaml        # 每个 agent 的模型、Jev 版本、guardrail 重试次数、置信度阈值、
+│   ├── settings.toml        # 每个 agent 的模型、Jev 版本、guardrail 重试次数、置信度阈值、
 │   │                        # Gmail 标签和发件人允许列表、目录、超时
-│   ├── header_fields.yaml   # JSON 字段 → Candata 控件定位 → 格式规则
-│   ├── excel_template.yaml  # Candata 发票导入模板的列顺序与格式
+│   ├── header_fields.toml   # JSON 字段 → Candata 控件定位 → 格式规则
+│   ├── excel_template.toml  # Candata 发票导入模板的列顺序与格式
 │   └── tariff/              # 加拿大海关税则分层候选、Candata 单位代码表
 ├── src/
 │   ├── gmail_reader.py      # fetch：Gmail 标签 → inbox/<票号>/（PDF + email.json）
@@ -313,11 +315,11 @@ cad-autofill/
 │   ├── flow.py              # ShipmentFlow：load → extract → validate → classify → write_excel
 │   ├── crews/
 │   │   └── extraction/
-│   │       ├── config/agents.yaml   # B/L、CI、EMF 专员与核对员
-│   │       ├── config/tasks.yaml
+│   │       ├── config/agents.toml   # B/L、CI、EMF 专员与核对员
+│   │       ├── config/tasks.toml
 │   │       ├── guardrails.py        # 必填字段与格式检查
 │   │       └── crew.py
-│   ├── review.py            # 校验报告、corrections.yaml、--resume 时应用修正
+│   ├── review.py            # 校验报告、corrections.toml、--resume 时应用修正
 │   ├── classifier/
 │   │   ├── base.py          # 分类接口：单据类型、HS 核对与建议、单位映射
 │   │   └── jev.py
@@ -339,17 +341,18 @@ cad-autofill/
                              # CREWAI_TRACING_ENABLED；不进版本库
 ```
 
-`header_fields.yaml` 示例：
+`header_fields.toml` 示例：
 
-```yaml
-bl_number:
-  locator: {auto_id: "txtBillOfLading"}   # 待控件扫描后确定
-  fallback: {tab_from: "txtShipmentNo", tabs: 3}
-  type: text
-port_of_entry:
-  locator: {title: "Port", control_type: "ComboBox"}
-  type: combobox                           # 输入后等待候选并精确匹配
-  format: "{value:0>4}"
+```toml
+[bl_number]
+locator = { auto_id = "txtBillOfLading" }  # 待控件扫描后确定
+fallback = { tab_from = "txtShipmentNo", tabs = 3 }
+type = "text"
+
+[port_of_entry]
+locator = { title = "Port", control_type = "ComboBox" }
+type = "combobox"  # 输入后等待候选并精确匹配
+format = "{value:0>4}"
 ```
 
 运行方式有三个命令：`python main.py fetch` 从 Gmail 收取新邮件到 `inbox/`；`python main.py extract inbox/<票号>` 运行 ShipmentFlow，只做识别和生成 Excel，可在任何电脑运行；校验失败后，`python main.py extract inbox/<票号> --resume` 从人填的修正继续；`python main.py fill inbox/<票号>` 在 Candata 电脑上执行填表和导入，读取 extract 生成的 JSON 和 xlsx，不使用 CrewAI。
@@ -423,7 +426,7 @@ CAD 由持牌报关员负责，程序始终停在提交前，提交动作只由�
 
 1. Flow 骨架 + 抽取 Crew + validator + excel_writer：用样本资料跑通识别到 xlsx，人工导入验证。
 2. gmail_reader：把真实单据邮件收到 `inbox/`，再对它们跑 `extract`。
-3. 人工处理环节：校验报告、`corrections.yaml` 和 `--resume`，用有真实冲突或故意改错的样本测试。
+3. 人工处理环节：校验报告、`corrections.toml` 和 `--resume`，用有真实冲突或故意改错的样本测试。
 4. rpa_importer：自动完成 Excel 导入，这一步界面操作少，适合先验证 RPA 可行性。
 5. rpa_filler：逐步加入表头字段，先做文本框，再做下拉框和自动补全。
 6. reviewer + 完整流程串联，小批量试运行。

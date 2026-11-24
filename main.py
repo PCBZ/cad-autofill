@@ -4,19 +4,24 @@
     python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, xlsx
     python main.py extract inbox/<shipment> --resume
                                               after a validation failure: apply the person's
-                                              corrections.yaml and continue
+                                              corrections.toml and continue
     python main.py fill inbox/<shipment>      Candata: fill header, import lines, stop before submit
 
 Only the standard library is imported at module level, so `fill` runs on the
 Candata computer with requirements-fill.txt alone (no CrewAI, no dotenv).
 """
+import sys
+
+if sys.version_info < (3, 11):
+    sys.exit("cad-autofill needs Python 3.11 or newer (config files are read with tomllib).")
+
 import argparse
 import os
-import sys
+import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.yaml"
+DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.toml"
 
 # CrewAI telemetry and tracing stay off whatever .env says: traces can contain
 # shipment text. Set before anything imports crewai.
@@ -74,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--settings", type=Path, default=DEFAULT_SETTINGS,
-        help="settings file (default: config/settings.yaml)",
+        help="settings file (default: config/settings.toml)",
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
 
@@ -92,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("shipment", type=shipment_dir, help="shipment folder, e.g. inbox/<shipment>")
     extract.add_argument(
         "--resume", action="store_true",
-        help="after a validation failure: apply output/<shipment>/corrections.yaml and "
+        help="after a validation failure: apply output/<shipment>/corrections.toml and "
         "validate again without calling the extraction crew",
     )
     extract.set_defaults(func=cmd_extract)
@@ -108,10 +113,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def load_settings(path: Path) -> dict:
+    with path.open("rb") as f:
+        return tomllib.load(f)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not args.settings.is_file():
+    try:
+        args.settings_data = load_settings(args.settings)
+    except FileNotFoundError:
         print(f"settings file not found: {args.settings}", file=sys.stderr)
+        return EXIT_USAGE
+    except tomllib.TOMLDecodeError as e:
+        print(f"settings file is not valid TOML: {args.settings}: {e}", file=sys.stderr)
         return EXIT_USAGE
     return args.func(args)
 
