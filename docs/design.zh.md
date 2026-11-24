@@ -73,12 +73,12 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 ```
 extract：          load → extract（抽取 Crew）→ validate ─ 通过 ─→ classify（Jev）→ write_excel → 结束
                                                          └ 不通过 → write_review → 停止，由人填写 corrections.toml
-extract --resume： load → apply_corrections ───────────→ validate → …
+extract（再次）： load → apply_corrections ───────────→ validate → …
 ```
 
 | Flow 步骤 | 写法 | 说明 |
 | --- | --- | --- |
-| load | `@start()` + `@router`，代码 | 新运行：pymupdf 读三份 PDF（文字过少判为扫描件，停止转人工），返回 `fresh`。带 `--resume`：读取已保存的 shipment JSON，返回 `resume` |
+| load | `@start()` + `@router`，代码 | 新运行：pymupdf 读三份 PDF（文字过少判为扫描件，停止转人工），返回 `fresh`。`output/<票号>/corrections.toml` 存在时：读取已保存的 shipment JSON，返回 `resume` |
 | extract | `@listen("fresh")`，抽取 Crew | 输出 shipment JSON |
 | apply_corrections | `@listen("resume")`，代码 | 应用 `corrections.toml` 里的值，标 `source: "human"` |
 | validate | `@router`，监听 `or_(extract, apply_corrections)`，代码 | 返回 `passed` 或 `failed` |
@@ -108,7 +108,7 @@ extract --resume： load → apply_corrections ───────────
    - `validation_report.md`：每个问题、每份单据上读到的值，以及来自哪份单据哪一页；
    - `corrections.toml`：每个问题一条，预先填好字段名和读到的值，`value` 留空。
 2. 人对照 PDF 检查。每一条要么在 `value` 填正确的值；要么单据确实不一致、抽取值应保留时，设 `accept: true` 并写 `note`。
-3. `python main.py extract inbox/<票号> --resume` 应用修正后重新校验，不会再调用抽取 Crew。通过就继续 classify 和 write_excel；还有问题就重新写出报告和修正文件。
+3. 再次运行 `python main.py extract inbox/<票号>`，程序发现填好的 `corrections.toml`，应用修正后重新校验，不会再调用抽取 Crew；还有条目没填时，列出这些条目并停止。通过就继续 classify 和 write_excel；还有问题就重新写出报告和修正文件。
 
 ```toml
 [[correction]]
@@ -129,6 +129,7 @@ note = "freight 20.00 is on the invoice total but not a line"
 - 修正过的值标 `source: "human"`，并记在 shipment JSON 的 `review` 里，含旧值、新值和备注；最终复核截图里标出。
 - 接受（accept）不等于通过：问题保留在报告里，报关员提交前还会再看到。
 - `fetch` 和 `extract` 会列出等待人工处理的票，停下来的票不会被遗忘。
+- 要从 PDF 重新开始处理某票货，删除 `output/<票号>/`。
 - 考虑过 AI 排查步骤，最后没有采用：那是唯一由模型改数据的环节，难以测试，而且每票都有报关员复核。如果样本实测（#13）的失败率很高，再在 `write_review` 之前加一个低成本模型的步骤。
 
 **配置**
@@ -319,7 +320,7 @@ cad-autofill/
 │   │       ├── config/tasks.toml
 │   │       ├── guardrails.py        # 必填字段与格式检查
 │   │       └── crew.py
-│   ├── review.py            # 校验报告、corrections.toml、--resume 时应用修正
+│   ├── review.py            # 校验报告、corrections.toml、再次 extract 时应用修正
 │   ├── classifier/
 │   │   ├── base.py          # 分类接口：单据类型、HS 核对与建议、单位映射
 │   │   └── jev.py
@@ -355,7 +356,7 @@ type = "combobox"  # 输入后等待候选并精确匹配
 format = "{value:0>4}"
 ```
 
-运行方式有三个命令：`python main.py fetch` 从 Gmail 收取新邮件到 `inbox/`；`python main.py extract inbox/<票号>` 运行 ShipmentFlow，只做识别和生成 Excel，可在任何电脑运行；校验失败后，`python main.py extract inbox/<票号> --resume` 从人填的修正继续；`python main.py fill inbox/<票号>` 在 Candata 电脑上执行填表和导入，读取 extract 生成的 JSON 和 xlsx，不使用 CrewAI。
+运行方式有三个命令：`python main.py fetch` 从 Gmail 收取新邮件到 `inbox/`；`python main.py extract inbox/<票号>` 运行 ShipmentFlow，只做识别和生成 Excel，可在任何电脑运行；校验失败后，再次运行同一条 `extract` 命令即从人填的修正继续；`python main.py fill inbox/<票号>` 在 Candata 电脑上执行填表和导入，读取 extract 生成的 JSON 和 xlsx，不使用 CrewAI。配置固定读取 `config/settings.toml`。
 
 ## 风险与注意事项
 
@@ -397,7 +398,7 @@ CAD 由持牌报关员负责，程序始终停在提交前，提交动作只由�
 
 - 假设：每票 5 页（B/L 1–2 页、CI 1–3 页、EMF 1 页），每页文字约 1,500 token；Haiku 5.5 的分词器对同样文本多产生约 30% token，已计入区间上限。抽取的用量比单次调用多，是因为每个 agent 都带 CrewAI 的角色提示，核对员还要再读一遍三个专员的输出。
 - Haiku 5.5 的低价只适用于 10 万 token 以内的 prompt，每次调用的 prompt 都在 1–2 万 token 以内，远低于门槛。
-- 校验失败不增加 API 费用：`--resume` 不会再调用抽取 Crew。guardrail 打回重做是主要变量，没计入上表。用样本资料实测 token 用量和校验通过率后再修正。
+- 校验失败不增加 API 费用：改完后重新运行不会再调用抽取 Crew。guardrail 打回重做是主要变量，没计入上表。用样本资料实测 token 用量和校验通过率后再修正。
 - 扫描件转人工不产生 API 费用；启用 PaddleOCR 备选也免费，只占本地 CPU。
 - 上表价格都是 OpenRouter 的价格，与各厂商官方价格相同。OpenRouter 充值另收 5.5% 手续费，合计约 0.011 美元/票。
 - 这个用量下 Gmail API 免费。
@@ -426,7 +427,7 @@ CAD 由持牌报关员负责，程序始终停在提交前，提交动作只由�
 
 1. Flow 骨架 + 抽取 Crew + validator + excel_writer：用样本资料跑通识别到 xlsx，人工导入验证。
 2. gmail_reader：把真实单据邮件收到 `inbox/`，再对它们跑 `extract`。
-3. 人工处理环节：校验报告、`corrections.toml` 和 `--resume`，用有真实冲突或故意改错的样本测试。
+3. 人工处理环节：校验报告、`corrections.toml` 和下次 `extract` 时自动继续，用有真实冲突或故意改错的样本测试。
 4. rpa_importer：自动完成 Excel 导入，这一步界面操作少，适合先验证 RPA 可行性。
 5. rpa_filler：逐步加入表头字段，先做文本框，再做下拉框和自动补全。
 6. reviewer + 完整流程串联，小批量试运行。

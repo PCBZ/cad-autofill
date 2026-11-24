@@ -122,8 +122,7 @@ Commands:
 | Command | What it does | Status |
 | --- | --- | --- |
 | `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
-| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx | Not implemented yet (#12) |
-| `python main.py extract inbox/<shipment> --resume` | After a validation failure: apply the person's `corrections.toml` and continue | Not implemented yet |
+| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Not implemented yet (#12, #36) |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
 `main.py` forces CrewAI telemetry and tracing off even if `.env` says

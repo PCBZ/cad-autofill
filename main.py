@@ -2,13 +2,16 @@
 
     python main.py fetch                      Gmail label -> inbox/<shipment>/
     python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, xlsx
-    python main.py extract inbox/<shipment> --resume
-                                              after a validation failure: apply the person's
-                                              corrections.toml and continue
     python main.py fill inbox/<shipment>      Candata: fill header, import lines, stop before submit
 
-Only the standard library is imported at module level, so `fill` runs on the
-Candata computer with requirements-fill.txt alone (no CrewAI, no dotenv).
+`extract` resumes by itself after a validation failure: once every entry in
+output/<shipment>/corrections.toml is filled in, running it again applies the
+corrections and validates without calling the extraction crew. To start a
+shipment over, delete output/<shipment>/.
+
+Settings are always read from config/settings.toml. Only the standard library
+is imported at module level, so `fill` runs on the Candata computer with
+requirements-fill.txt alone (no CrewAI, no dotenv).
 """
 import sys
 
@@ -21,7 +24,7 @@ import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_SETTINGS = PROJECT_ROOT / "config" / "settings.toml"
+SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.toml"
 
 # CrewAI telemetry and tracing stay off whatever .env says: traces can contain
 # shipment text. Set before anything imports crewai.
@@ -32,8 +35,7 @@ CREWAI_OFF = {
 }
 os.environ.update(CREWAI_OFF)
 
-EXIT_OK = 0
-EXIT_USAGE = 1          # bad settings path (argparse uses 2 for bad arguments)
+EXIT_SETTINGS = 1        # settings.toml missing or invalid (argparse uses 2 for bad arguments)
 EXIT_NOT_IMPLEMENTED = 3
 
 
@@ -45,11 +47,9 @@ def load_env() -> None:
     os.environ.update(CREWAI_OFF)
 
 
-def shipment_dir(value: str) -> Path:
-    path = Path(value)
-    if not path.is_dir():
-        raise argparse.ArgumentTypeError(f"not a folder: {value}")
-    return path
+def load_settings() -> dict:
+    with SETTINGS_FILE.open("rb") as f:
+        return tomllib.load(f)
 
 
 def not_implemented(command: str, issue: str) -> int:
@@ -57,78 +57,55 @@ def not_implemented(command: str, issue: str) -> int:
     return EXIT_NOT_IMPLEMENTED
 
 
-def cmd_fetch(args: argparse.Namespace) -> int:
+def fetch(settings: dict) -> int:
     load_env()
     return not_implemented("fetch", "#33")
 
 
-def cmd_extract(args: argparse.Namespace) -> int:
+def extract(settings: dict, shipment: Path) -> int:
     load_env()
     return not_implemented("extract", "#12")
 
 
-def cmd_fill(args: argparse.Namespace) -> int:
+def fill(settings: dict, shipment: Path) -> int:
     return not_implemented("fill", "#28")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="main.py",
-        description="Fill Candata CAD entries from shipment documents. "
-        "Always stops before submission.",
-    )
-    parser.add_argument(
-        "--settings", type=Path, default=DEFAULT_SETTINGS,
-        help="settings file (default: config/settings.toml)",
+        description="Fill Candata CAD entries from shipment documents. Always stops before submission.",
     )
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
-
-    fetch = sub.add_parser(
-        "fetch", help="fetch new shipment emails from Gmail into inbox/",
-        description="Read new emails under the Gmail label from allowed senders and "
-        "save each one as inbox/<YYYYMMDD>-<message id>/ (PDFs + email.json).",
-    )
-    fetch.set_defaults(func=cmd_fetch)
-
-    extract = sub.add_parser(
-        "extract", help="extract one shipment into JSON, a validation report and the import xlsx",
-        description="Run ShipmentFlow on one shipment folder. Results go to output/<shipment>/.",
-    )
-    extract.add_argument("shipment", type=shipment_dir, help="shipment folder, e.g. inbox/<shipment>")
-    extract.add_argument(
-        "--resume", action="store_true",
-        help="after a validation failure: apply output/<shipment>/corrections.toml and "
-        "validate again without calling the extraction crew",
-    )
-    extract.set_defaults(func=cmd_extract)
-
-    fill = sub.add_parser(
-        "fill", help="fill the Candata header and import the lines (Candata computer)",
-        description="Fill the shipment header in Candata, import the invoice lines, "
-        "save screenshots and stop before submission. Reads the output of extract.",
-    )
-    fill.add_argument("shipment", type=shipment_dir, help="shipment folder, e.g. inbox/<shipment>")
-    fill.set_defaults(func=cmd_fill)
-
-    return parser
-
-
-def load_settings(path: Path) -> dict:
-    with path.open("rb") as f:
-        return tomllib.load(f)
+    sub.add_parser("fetch", help="fetch new shipment emails from Gmail into inbox/")
+    for name, help_text in [
+        ("extract", "extract one shipment (resumes after a filled-in corrections.toml)"),
+        ("fill", "fill Candata and import the lines, stop before submit (Candata computer)"),
+    ]:
+        sub.add_parser(name, help=help_text).add_argument(
+            "shipment", type=Path, help="shipment folder, e.g. inbox/<shipment>"
+        )
+    args = parser.parse_args(argv)
+    if args.command != "fetch" and not args.shipment.is_dir():
+        parser.error(f"not a folder: {args.shipment}")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = parse_args(argv)
     try:
-        args.settings_data = load_settings(args.settings)
+        settings = load_settings()
     except FileNotFoundError:
-        print(f"settings file not found: {args.settings}", file=sys.stderr)
-        return EXIT_USAGE
+        print(f"settings file not found: {SETTINGS_FILE}", file=sys.stderr)
+        return EXIT_SETTINGS
     except tomllib.TOMLDecodeError as e:
-        print(f"settings file is not valid TOML: {args.settings}: {e}", file=sys.stderr)
-        return EXIT_USAGE
-    return args.func(args)
+        print(f"settings file is not valid TOML: {SETTINGS_FILE}: {e}", file=sys.stderr)
+        return EXIT_SETTINGS
+    if args.command == "fetch":
+        return fetch(settings)
+    if args.command == "extract":
+        return extract(settings, args.shipment)
+    return fill(settings, args.shipment)
 
 
 if __name__ == "__main__":

@@ -73,12 +73,12 @@ The order of steps is fixed, so a Flow chains them. Only extraction needs model 
 ```
 extract:           load → extract (extraction crew) → validate ─ passed ─→ classify (Jev) → write_excel → end
                                                                └ failed → write_review → stop; a person fills corrections.toml
-extract --resume:  load → apply_corrections ────────→ validate → …
+extract (again):   load → apply_corrections ────────→ validate → …
 ```
 
 | Flow step | Implemented as | Notes |
 | --- | --- | --- |
-| load | `@start()` + `@router`, code | Fresh run: pymupdf reads the three PDFs (too little text means a scanned PDF: stop and hand to a person), then `fresh`. With `--resume`: loads the saved shipment JSON, then `resume` |
+| load | `@start()` + `@router`, code | Fresh run: pymupdf reads the three PDFs (too little text means a scanned PDF: stop and hand to a person), then `fresh`. If `output/<shipment>/corrections.toml` exists: loads the saved shipment JSON, then `resume` |
 | extract | `@listen("fresh")`, extraction crew | Outputs the shipment JSON |
 | apply_corrections | `@listen("resume")`, code | Applies the values from `corrections.toml`, marked `source: "human"` |
 | validate | `@router` on `or_(extract, apply_corrections)`, code | Returns `passed` or `failed` |
@@ -108,7 +108,7 @@ extract --resume:  load → apply_corrections ────────→ valida
    - `validation_report.md`: each issue, the value found on each document, and the document and page it came from;
    - `corrections.toml`: one entry per issue, prefilled with the field and the values found, and an empty `value`.
 2. The person checks the PDFs. For each entry they either fill `value` with the correct value, or set `accept: true` with a `note` when the documents really differ and the extracted value should stand.
-3. `python main.py extract inbox/<shipment> --resume` applies the corrections and validates again without calling the extraction crew. If it passes, the Flow continues to classify and write_excel. If issues remain, a new report and corrections file are written.
+3. Running `python main.py extract inbox/<shipment>` again finds the filled-in `corrections.toml`, applies it and validates again without calling the extraction crew. If an entry is still empty, it lists the open entries and stops. If it passes, the Flow continues to classify and write_excel. If issues remain, a new report and corrections file are written.
 
 ```toml
 [[correction]]
@@ -129,6 +129,7 @@ note = "freight 20.00 is on the invoice total but not a line"
 - Corrected values have `source: "human"` and are listed under `review` in the shipment JSON with the old value, new value and note. The final review screenshots highlight them.
 - An accepted issue is not a pass: it stays in the report so the broker sees it again before submission.
 - `fetch` and `extract` print the shipments waiting for review, so a stopped shipment is not forgotten.
+- To start a shipment over from the PDFs, delete `output/<shipment>/`.
 - An AI investigation step was considered and left out: it is the only place a model would change data, it is hard to test, and the broker reviews every CAD anyway. If the failure rate measured on samples (#13) turns out high, a step on a low-cost model can be added before `write_review`.
 
 **Configuration**
@@ -319,7 +320,7 @@ cad-autofill/
 │   │       ├── config/tasks.toml
 │   │       ├── guardrails.py        # required-field and format checks
 │   │       └── crew.py
-│   ├── review.py            # validation report, corrections.toml, applying corrections on --resume
+│   ├── review.py            # validation report, corrections.toml, applying corrections when extract runs again
 │   ├── classifier/
 │   │   ├── base.py          # classifier interface: document type, HS check and suggestion, unit mapping
 │   │   └── jev.py
@@ -356,7 +357,7 @@ type = "combobox"  # type, wait for candidates, pick the exact match
 format = "{value:0>4}"
 ```
 
-There are three commands. `python main.py fetch` pulls new shipment emails from Gmail into `inbox/`. `python main.py extract inbox/<shipment>` runs ShipmentFlow: it only extracts and generates the Excel file, and can run on any computer. After a validation failure, `python main.py extract inbox/<shipment> --resume` continues from the person's corrections. `python main.py fill inbox/<shipment>` runs on the Candata computer: it fills the form and imports the lines, reading the JSON and xlsx produced by `extract`, and does not use CrewAI.
+There are three commands. `python main.py fetch` pulls new shipment emails from Gmail into `inbox/`. `python main.py extract inbox/<shipment>` runs ShipmentFlow: it only extracts and generates the Excel file, and can run on any computer. After a validation failure, running the same `extract` command again continues from the person's corrections. `python main.py fill inbox/<shipment>` runs on the Candata computer: it fills the form and imports the lines, reading the JSON and xlsx produced by `extract`, and does not use CrewAI. Settings are always read from `config/settings.toml`.
 
 ## Risks and notes
 
@@ -398,7 +399,7 @@ With pymupdf reading the text layer and CrewAI running multi-agent extraction, A
 
 - Assumptions: 5 pages per shipment (B/L 1–2 pages, CI 1–3 pages, EMF 1 page), about 1,500 tokens of text per page. Haiku 5.5's tokenizer produces about 30% more tokens for the same text; this is included in the upper end of the range. Extraction uses more tokens than a single call because every agent carries CrewAI's role prompt, and the reconciler reads the three specialists' output again.
 - Haiku 5.5's low price applies only to prompts under 100,000 tokens. Every prompt here is 10,000–20,000 tokens, well below that limit.
-- Validation failures add no API cost: `--resume` does not call the extraction crew again. Guardrail retries are the main variable and are not included above. Revise after measuring tokens and validation pass rate on sample shipments.
+- Validation failures add no API cost: the rerun after corrections does not call the extraction crew again. Guardrail retries are the main variable and are not included above. Revise after measuring tokens and validation pass rate on sample shipments.
 - Scanned PDFs handed to a person cost nothing in API fees; the PaddleOCR fallback is also free and uses only local CPU.
 - All prices above are OpenRouter's, which match the vendors' own. OpenRouter adds a 5.5% fee on each credit purchase, so the total is about $0.011 per shipment.
 - The Gmail API is free at this volume.
@@ -427,7 +428,7 @@ Development order:
 
 1. Flow skeleton + extraction crew + validator + excel_writer: run samples from extraction to xlsx and verify by importing by hand.
 2. gmail_reader: fetch real shipment emails into `inbox/` and run `extract` on them.
-3. Human review loop: validation report, `corrections.toml` and `--resume`, tested on samples with real conflicts or deliberately corrupted values.
+3. Human review loop: validation report, `corrections.toml` and resuming on the next `extract`, tested on samples with real conflicts or deliberately corrupted values.
 4. rpa_importer: automate the Excel import. This step has few UI actions, so it is a good first test of RPA feasibility.
 5. rpa_filler: add header fields step by step, text boxes first, then drop-downs and autocomplete.
 6. reviewer + end-to-end wiring, then a small pilot batch.
