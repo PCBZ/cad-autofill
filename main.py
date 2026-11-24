@@ -10,8 +10,6 @@
 Only the standard library is imported at module level, so `fill` runs on the
 Candata computer with requirements-fill.txt alone (no CrewAI, no dotenv).
 """
-from __future__ import annotations
-
 import argparse
 import os
 import sys
