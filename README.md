@@ -6,7 +6,7 @@ Excel import, and RPA that types the shipment header into the Candata Global
 Windows client. A licensed broker reviews and submits every CAD; the program
 always stops before submission.
 
-Design: [docs/design.md](docs/design.md) ([中文](docs/design.zh.md))
+Design: [wiki: Design](https://github.com/PCBZ/cad-autofill/wiki/Design) ([中文](https://github.com/PCBZ/cad-autofill/wiki/Design-zh))
 
 ## Accounts and API keys
 
@@ -67,7 +67,7 @@ The same key is used for:
 - Jev through the TypeSafe SDK with base URL `https://openrouter.ai/api`,
   model `typesafe/jev-1.14`. No TypeSafe account or waitlist is needed.
 
-Expected cost is about $0.011 per shipment (see `docs/design.md`, cost
+Expected cost is about $0.011 per shipment (see the [design doc](https://github.com/PCBZ/cad-autofill/wiki/Design), cost
 section).
 
 ### Gmail API

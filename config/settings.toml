@@ -1,5 +1,5 @@
 # cad-autofill settings. Secrets do not go here: the OpenRouter key is in .env,
-# Gmail credentials are in secrets/. See docs/design.md for what each part does.
+# Gmail credentials are in secrets/. See the design doc (https://github.com/PCBZ/cad-autofill/wiki/Design) for what each part does.
 
 [models]
 # CrewAI LLM names via LiteLLM: openrouter/<vendor>/<model>
