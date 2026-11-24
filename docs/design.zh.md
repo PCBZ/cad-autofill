@@ -20,9 +20,9 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 
 ## 整体流程
 
-一票货从收到邮件到提交前，经过六个步骤，只有第 6 步需要人工。
+一票货从收到邮件到提交前，经过六个步骤。邮箱访问、附件下载和 AI 上传前需要明确确认；第 6 步由报关员最终复核。
 
-1. **从 Gmail 收取**：程序读取指定 Gmail 标签下、来自允许发件人的新邮件，把 PDF 附件和邮件正文存到 `inbox/<票号>/`，并记录哪些邮件已处理。
+1. **从 Gmail 收取**：程序读取指定 Gmail 标签下、来自允许发件人的新邮件，只把匹配的 PDF 附件和最少邮件元数据存到 `inbox/<票号>/`，并记录哪些邮件已处理。
 2. **AI 分析识别**：三份 PDF 先用 pymupdf 读出文字层（扫描件转人工或走本地 OCR 备选），再交给抽取 Crew：B/L、CI、EMF 三个专员各读一份单据，核对员汇总成一份结构化 JSON，分表头和产品明细两部分。程序做交叉校验，不通过时停下来，由人在修正文件里改正数值，再从校验这一步继续；校验通过后，再由 Jev 核对单据类型、HS 编码和计量单位。
 3. **生成产品 Excel**：明细部分按 Candata 发票明细导入模板生成 xlsx，HS 编码照发票原样。
 4. **模拟操作填表**：程序打开 Candata 的 shipment 界面，用真实的鼠标点击和键盘输入逐个填写表头字段。
@@ -59,11 +59,11 @@ Nov 21, 2026 · Wenshuang（Nov 22 更新：AI 部分改用 CrewAI 编排。Nov 
 
 - **权限**：Gmail API + OAuth，scope 为 `gmail.readonly`。程序不能发信、删信或改标签。OAuth 客户端文件和保存的 token 放在 `secrets/`，不进版本库。
 - **读哪些邮件**：`settings.toml` 里设定的标签（例如 `CAD/Incoming`，由 Gmail 按发件人地址设置的过滤器自动加上）下、上次运行之后收到、发件人在 `settings.toml` 允许列表里的邮件。其他邮件跳过，并记在收件日志里。
-- **写出什么**：`inbox/<YYYYMMDD>-<邮件 ID>/`，里面是全部 PDF 附件和一个 `email.json`，记录邮件 ID、会话 ID、发件人、主题、收件时间和纯文本正文。
+- **写出什么**：`inbox/<YYYYMMDD>-<邮件 ID>/`，里面是匹配的 PDF 附件和一个 `email.json`，记录邮件 ID、会话 ID、发件人、主题及收件时间；默认不保存正文。
 - **已处理记录**：只读权限无法给邮件打"已处理"标记，所以已处理的邮件 ID 存在 `output/gmail_state.json`。重复运行 `fetch` 不会为同一封邮件建第二个文件夹。
 - **一封邮件一票货**：这是默认规则。没有 PDF、或单据多于或少于三份的邮件照样保存但会标出；之后 Jev 的单据类型识别会指出缺了哪份或多了哪份。同一会话里分几封发来的单据，在 `settings.toml` 打开后按会话 ID 合并。
 - **其他附件**：只读取 PDF。压缩包、图片和共享网盘链接不打开，邮件标出交给人工。
-- **邮件正文**：作为补充上下文交给核对员，主要用于客户参考号和备注。取自正文的表头值标 `source: "email"`，复核时标出。正文和 PDF 文字一样只当数据处理：agent 没有任何工具，试图指挥模型的文字触发不了任何操作。
+- **邮件正文**：默认排除。只有另行明确批准后，才作为补充上下文交给核对员，主要用于客户参考号和备注。取自正文的表头值标 `source: "email"`，复核时标出。正文和 PDF 文字一样只当数据处理：agent 没有任何工具，试图指挥模型的文字触发不了任何操作。
 - **账号类型**：邮箱在 Google Workspace 上时，OAuth 同意屏幕设为 Internal：不需要 Google 审核，token 也不会每周过期。个人 @gmail.com 只能用 External 应用的 Testing 模式，token 每 7 天过期一次，需要重新登录；这种情况用 IMAP + 应用专用密码作备选。
 
 ### CrewAI 编排
@@ -139,7 +139,9 @@ note = "freight 20.00 is on the invoice total but not a line"
 - agent 的 role、goal、backstory 和任务描述放在各 crew 的 `config/agents.toml`、`config/tasks.toml`，由代码用 `tomllib` 读取后传给 CrewAI 的 `Agent` 和 `Task`，不使用 CrewAI 基于 YAML 的 `@CrewBase` 加载方式；每个 agent 用哪个模型写在 `settings.toml`。
 - 所有模型都走 OpenRouter，只用一个 `OPENROUTER_API_KEY`。CrewAI 的 `LLM` 类通过 LiteLLM（`crewai[litellm]`）调用 OpenRouter，模型名写成 `openrouter/<vendor>/<model>`：抽取 Crew 用 `openrouter/anthropic/claude-haiku-5.5`。换其他厂商的模型只改 `settings.toml`。
 - 在 OpenRouter 账号的隐私设置里只允许不用提示词训练的提供方，并给 key 设额度上限。
-- 关闭遥测和 tracing：`.env` 里设 `CREWAI_DISABLE_TELEMETRY=true`、`OTEL_SDK_DISABLED=true`、`CREWAI_TRACING_ENABLED=false`。tracing 记录可能包含提示词和单据内容，不能上传。
+- 关闭遥测和 tracing：`.env` 里设 `CREWAI_DISABLE_TELEMETRY=true`、`OTEL_SDK_DISABLED=true`、`CREWAI_TRACING_ENABLED=false`。tracing 记录可能包含提示词和单据内容，不能上传。关闭 tracing 不会阻止模型 API 调用发送单据文字。
+- 在 `settings.toml` 显式配置 `mailbox_provider`、邮箱/文件夹、发件人、主题、日期范围和附件筛选条件；凭据放在 `.env` 或安全凭据存储中，不进源代码库。邮箱权限限定为只读，按需运行查询。匹配的 PDF 附件暂存到 `inbox/`，不下载无关邮件。只有公司批准 AI 提供方及数据处理条款后，才可启用 `approved_cloud`；缺少审批或配置时停止处理。默认不把邮件正文作为 AI 输入。
+- Gmail 连接使用 OAuth 用户授权，并申请满足需求的最小只读权限；单独的 Google API key 不能授权读取私人邮箱。申请/更新邮箱授权令牌前，界面必须明确提示将访问哪个公司邮箱、所需权限和用途，并要求用户明确确认。单独的“测试连接”操作只验证 OAuth 令牌和访问权限，不列出邮件、不读取正文、不下载附件；结果只显示成功/失败及授权邮箱地址。查询邮件、下载附件和向 AI 发送附件/文字分别弹出确认。查询前确认筛选条件及结果数量上限；查询后另行确认匹配附件清单再下载；AI 确认明确指出提供方，并说明客户单据将离开邮箱/本机。取消后不得读取或上传数据。
 
 来源：[CrewAI Flows](https://docs.crewai.com/en/concepts/flows)、[Tasks](https://docs.crewai.com/en/concepts/tasks)、[LLMs](https://docs.crewai.com/en/concepts/llms)、[Telemetry](https://docs.crewai.com/en/telemetry)、[Tracing](https://docs.crewai.com/en/observability/tracing)、[安装](https://docs.crewai.com/en/installation)
 
@@ -296,7 +298,7 @@ python -m venv .venv
 - **CrewAI**：开源库，在本地运行，不需要 CrewAI 账号；遥测和 tracing 按"CrewAI 编排"一节关闭。
 - **Jev（TypeSafe AI）**：通过 OpenRouter 调用，不需要 TypeSafe 账号或 key。
 - 文字提取在本地完成，不依赖外部 OCR 服务。
-- 以上服务按用量计费，模型名写在配置里便于更换；单据文字会发送到外部服务，使用前需确认符合公司和客户的数据处理要求。
+- 匹配到的附件及提取出的单据文字会在获批的云端流程中发送给所选 AI/模型服务。启用前必须取得公司批准并审查提供方的数据处理条款。只有筛选命中的 PDF 附件可进入 AI；无关邮件正文和附件不发送。只读邮箱权限和本地暂存不能消除客户资料发送到外部 AI 的风险。关闭遥测和 tracing；禁止静默切换到未批准的提供方。
 
 注册步骤和 `.env` 变量名见 README 的"Accounts and API keys"一节。
 
@@ -368,6 +370,10 @@ format = "{value:0>4}"
 
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
+| 邮箱筛选条件过宽或有误 | 可能获取或处理无关客户单据 | 显式配置邮箱/文件夹、日期、发件人/主题和附件条件；AI 处理前展示匹配邮件及附件名称；只接收 PDF |
+| 匹配到重复或含糊附件 | 可能拼错货运单据 | 按邮箱附件 ID 和内容哈希去重；识别单据类型；缺件、重复或不明确时停止并转人工 |
+| 邮箱访问或客户资料泄露 | 未授权访问或对外披露 | 使用范围受限的只读凭据；不标记、移动、删除或发送邮件；仅把匹配附件发给公司批准的 AI 提供方 |
+| 用户不清楚 Gmail 访问或上传范围 | 可能意外访问或传输公司敏感资料 | OAuth 授权、邮件查询、附件下载和 AI 上传前分别提示并确认；连接测试仅验证授权，不读取邮件内容 |
 | 控件识别不到（自绘界面） | 只能用 Tab 导航或坐标，容易填错 | 先跑 scan_candata_controls.py 评估；每个字段填完回读核对 |
 | Candata 升级改界面 | 定位失效 | 定位全部放配置；启动时自检关键控件是否存在 |
 | AI 识别错误 | 表头或明细数据错 | 交叉校验；低置信度字段标红；人工复核后才提交 |
@@ -425,6 +431,8 @@ CAD 由持牌报关员负责，程序始终停在提交前，提交动作只由�
 - [ ] 确认接收单据的邮箱和标签、是否在 Google Workspace 上、允许哪些发件人
 - [ ] 创建 Google Cloud 项目，启用 Gmail API，创建 OAuth 客户端
 - [ ] 用 1–2 票样本跑通抽取 Crew，实测 token 用量和校验通过率
+- [ ] 确认查询/附件筛选条件，以及公司对匹配单据上传 AI 的批准
+- [ ] 实现连接、查询、下载和 AI 上传的独立提示与确认；连接测试不得读取邮件内容
 - [ ] 锁定 CrewAI 版本，确认遥测和 tracing 已关闭
 
 开发顺序：

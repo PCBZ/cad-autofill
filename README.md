@@ -10,6 +10,23 @@ Design: [docs/design.md](docs/design.md) ([中文](docs/design.zh.md))
 
 ## Accounts and API keys
 
+### Local Gmail connection test
+
+The interactive connection test is in `tests/test_gmail_connection.py`.
+Run it from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-gmail-test.txt
+.\.venv\Scripts\python.exe tests\test_gmail_connection.py --client-secrets secrets\gmail_client.json --token-file secrets\gmail_test_token.json
+```
+
+It requires a Desktop app OAuth client JSON at `secrets/gmail_client.json` (an API key
+alone is insufficient). Before connecting, it requires explicit confirmation.
+It requests Gmail metadata permission and only calls `users.getProfile`; it
+does not list messages, read bodies, download attachments, or send data to AI.
+The local `secrets/gmail_test_token.json` token file is git-ignored. This is a manual live
+connection test, not a mocked unit test, and is not run by GitHub Actions.
+
 Step 0 below needs none of these. They are needed from M1 (extraction) on.
 
 | Service | Needed for | Account | Credential | Where it goes |
