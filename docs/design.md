@@ -20,9 +20,9 @@ Out of scope: the program does not submit CADs, does not correct HS codes, does 
 
 ## Overall flow
 
-A shipment goes through six steps from receiving the email to just before submission. Only step 6 needs a person.
+A shipment goes through six steps from receiving the email to just before submission. Mailbox access, attachment download and AI upload require explicit confirmation; step 6 is the final broker review.
 
-1. **Fetch from Gmail**: the program reads new emails under a set Gmail label from allowed senders, saves the PDF attachments and the email text into `inbox/<shipment>/`, and records which messages it has processed.
+1. **Fetch from Gmail**: the program reads new emails under a set Gmail label from allowed senders, saves only matching PDF attachments and minimal email metadata into `inbox/<shipment>/`, and records which messages it has processed.
 2. **AI extraction**: pymupdf reads the text layer of the three PDFs (scanned PDFs go to manual handling, or to an optional local OCR fallback). The extraction crew then takes over: B/L, CI and EMF specialists each read one document, and a reconciler merges their output into one structured JSON with a header part and an invoice-lines part. Code cross-checks the result. If the check fails, the run stops and a person corrects the values in a corrections file; the run then resumes from validation. After validation passes, Jev checks the document types, HS codes and units of measure.
 3. **Generate the product Excel**: the lines part is written as an xlsx in Candata's invoice-lines import template. HS codes are copied exactly as they appear on the invoice.
 4. **Fill the form**: the program opens the shipment screen in Candata and fills each header field with real mouse clicks and keystrokes.
@@ -59,11 +59,11 @@ Drop-downs and autocomplete fields (country codes, port codes, currency) are han
 
 - **Access**: Gmail API with OAuth and the `gmail.readonly` scope. The program cannot send, delete, or relabel mail. The OAuth client file and the saved token are kept in `secrets/`, which is not committed.
 - **What it reads**: messages under the label set in `settings.toml` (for example `CAD/Incoming`, applied by a Gmail filter on the sender addresses), received after the last run, from senders on the allowlist in `settings.toml`. Other messages are skipped and listed in the fetch log.
-- **What it writes**: `inbox/<YYYYMMDD>-<message id>/` with every PDF attachment and an `email.json` holding the message ID, thread ID, sender, subject, received time and plain-text body.
+- **What it writes**: `inbox/<YYYYMMDD>-<message id>/` with matching PDF attachments and an `email.json` holding the message ID, thread ID, sender, subject and received time. The body is excluded by default.
 - **Processed messages**: with a read-only scope the program cannot mark mail as done, so processed message IDs are kept in `output/gmail_state.json`. Running `fetch` again never creates a second folder for the same message.
 - **One email, one shipment**: this is the default. Emails with no PDF, or with more or fewer than three documents, are still saved but flagged; Jev's document type check then reports which document is missing or extra. Documents split across several emails in one thread are merged by thread ID when `settings.toml` turns that on.
 - **Other attachments**: only PDFs are read. Zip files, images, and links to shared drives are not opened; the email is flagged for a person.
-- **Email body**: passed to the reconciler as extra context, mainly for client references and instructions. A header value taken from the body has `source: "email"` and is highlighted at review. Body text, like PDF text, is treated as data: agents have no tools, so text that tries to instruct the model cannot trigger any action.
+- **Email body**: excluded by default. Only after separate explicit approval may it be passed to the reconciler as extra context, mainly for client references and instructions. A header value taken from the body has `source: "email"` and is highlighted at review. Body text, like PDF text, is treated as data: agents have no tools, so text that tries to instruct the model cannot trigger any action.
 - **Account type**: if the mailbox is on Google Workspace, set the OAuth consent screen to Internal: no Google verification is needed and the token does not expire weekly. A personal @gmail.com account can only use an External app in Testing mode, where the token expires every 7 days and someone has to sign in again; for that case, IMAP with an app password is the fallback.
 
 ### CrewAI orchestration
@@ -139,7 +139,9 @@ note = "freight 20.00 is on the invoice total but not a line"
 - Each crew keeps its agents' role, goal and backstory and its task descriptions in its own `config/agents.toml` and `config/tasks.toml`; code reads them with `tomllib` and passes the text to CrewAI's `Agent` and `Task`, so CrewAI's YAML-based `@CrewBase` loader is not used. The model for each agent is set in `settings.toml`.
 - All models go through OpenRouter with one `OPENROUTER_API_KEY`. CrewAI's `LLM` class reaches OpenRouter through LiteLLM (`crewai[litellm]`). Model names have the form `openrouter/<vendor>/<model>`: `openrouter/anthropic/claude-haiku-5.5` for the extraction crew. Switching to another vendor's model only changes `settings.toml`.
 - In the OpenRouter account's privacy settings, allow only providers that do not train on prompts, and set a credit limit on the key.
-- Telemetry and tracing are turned off in `.env`: `CREWAI_DISABLE_TELEMETRY=true`, `OTEL_SDK_DISABLED=true`, `CREWAI_TRACING_ENABLED=false`. Traces can contain prompts and document content and must not be uploaded.
+- Telemetry and tracing are turned off in `.env`: `CREWAI_DISABLE_TELEMETRY=true`, `OTEL_SDK_DISABLED=true`, `CREWAI_TRACING_ENABLED=false`. Traces can contain prompts and document content and must not be uploaded. Disabling tracing does not prevent document text being sent in model API calls.
+- `mailbox_provider` and mailbox/folder, sender, subject, date-range and attachment filters are explicit in `settings.toml`; provider credentials are stored in `.env` or secure credential storage, never in source control. Mail access is scoped read-only and searches run on demand. Matching PDF attachments are staged under `inbox/`; unrelated messages are not downloaded. The configured AI mode must be `approved_cloud` only after company approval of the AI provider and data handling terms; if approval/configuration is absent, processing stops. The message body is excluded from AI input by default.
+- Gmail connection setup uses OAuth user consent with the narrowest workable read-only scope; a Google API key alone is not authorization to read a private mailbox. Before obtaining or refreshing a mailbox token, show a clear warning naming the company mailbox, requested scope and intended use, and require an explicit confirmation. A separate “Test connection” action validates the OAuth token and access without listing messages, reading message bodies or downloading attachments; report only success/failure and the authorized account address. Searching mail, downloading attachments and sending attachments/text to AI each require their own explicit confirmation. Before search, confirmation shows the filter and result limit; after search, a separate download confirmation shows the matching attachment list; AI confirmation names the provider and states that customer documents will leave the mailbox/computer. Cancel means no data retrieval or upload.
 
 Sources: [CrewAI Flows](https://docs.crewai.com/en/concepts/flows), [Tasks](https://docs.crewai.com/en/concepts/tasks), [LLMs](https://docs.crewai.com/en/concepts/llms), [Telemetry](https://docs.crewai.com/en/telemetry), [Tracing](https://docs.crewai.com/en/observability/tracing), [Installation](https://docs.crewai.com/en/installation)
 
@@ -296,7 +298,7 @@ python -m venv .venv
 - **CrewAI**: an open-source library that runs locally; no CrewAI account needed. Telemetry and tracing are turned off as described in "CrewAI orchestration".
 - **Jev (TypeSafe AI)**: called through OpenRouter, so no TypeSafe account or key is needed.
 - Text extraction runs locally and does not depend on an external OCR service.
-- These services bill by usage, and model names are kept in config so they are easy to change. Document text is sent to external services, so confirm this meets the company's and clients' data handling requirements before use.
+- Matching attachments and extracted document text are sent to the selected external AI/model services in the approved cloud workflow. Company approval and review of provider/data handling terms are required before enabling it. Only filtered PDF attachments are eligible; unrelated email bodies and attachments are excluded. Read-only mailbox access and local staging do not remove the risk of sending customer data to an external AI provider. Disable telemetry/tracing and stop rather than silently using an unapproved provider.
 
 Sign-up steps and `.env` variable names are in the README, section "Accounts and API keys".
 
@@ -369,6 +371,10 @@ The biggest risk is that Candata's controls cannot be detected. That decides how
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
+| Overly broad or incorrect mail filters | Unrelated client documents could be retrieved or processed | Require explicit mailbox/folder, date, sender/subject and attachment filters; show matching messages and attachment names before AI processing; accept PDFs only |
+| Duplicate or ambiguous matching attachments | Wrong shipment documents could be combined | Deduplicate by provider ID and content hash; classify document types; stop for missing, duplicate or ambiguous types |
+| Mailbox access or customer data exposure | Unauthorized access or external disclosure | Use scoped read-only credentials; never mark, move, delete or send email; transmit only matching attachments to an AI provider approved by the company |
+| User does not understand Gmail access or upload scope | Sensitive company data may be accessed or transmitted unexpectedly | Show an explicit warning and obtain confirmation before OAuth authorization, mail search, attachment download and AI upload; connection test checks authorization only and does not read mail content |
 | Controls not detectable (custom-drawn UI) | Only Tab navigation or coordinates remain, which makes wrong entries easy | Run `scan_candata_controls.py` first; read back every field after typing |
 | Candata upgrade changes the UI | Locators break | Keep all locators in config; check key controls exist at startup |
 | AI extraction errors | Wrong header or line data | Cross-validation; mark low-confidence fields red; submit only after human review |
@@ -426,6 +432,8 @@ Before writing the form-filling and Excel modules, the following must be in hand
 - [ ] Confirm which mailbox and label receive shipment documents, whether it is on Google Workspace, and which senders to allow
 - [ ] Create the Google Cloud project, enable the Gmail API and create the OAuth client
 - [ ] Run the extraction crew end to end on 1–2 sample shipments and measure token use and validation pass rate
+- [ ] Confirm the query/attachment filters and company approval for uploading matching documents to AI
+- [ ] Implement separate confirmations for connection, mail search, download and AI upload; connection tests must not read messages
 - [ ] Pin the CrewAI version and confirm telemetry and tracing are off
 
 Development order:
