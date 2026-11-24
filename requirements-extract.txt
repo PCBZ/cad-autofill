@@ -1,0 +1,21 @@
+# main.py fetch and main.py extract. Runs on any computer.
+# Minimum versions; pinned after integration testing (issue #14).
+
+# Gmail intake
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+
+# Text extraction
+pymupdf>=1.24
+# paddleocr + paddlepaddle   # local OCR fallback for scanned PDFs (issue #29)
+
+# Orchestration and extraction: all models through OpenRouter
+crewai[litellm]>=1.15        # Claude Haiku 5.5 / Sonnet 5.5 via OpenRouter
+
+# Classification
+typesafe-sdk>=0.7.5          # Jev via OpenRouter
+
+pydantic>=2.5
+openpyxl>=3.1
+PyYAML>=6.0
+python-dotenv>=1.0

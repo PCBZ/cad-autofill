@@ -91,6 +91,41 @@ processing real shipments, get approval under the company's and clients' data
 handling policies. Also confirm with Candata that UI automation of the client
 is allowed under the service agreement (issue in milestone M0).
 
+## Setup
+
+Python 3.10–3.13 (3.12 recommended; CrewAI does not support 3.14 yet).
+
+On the computer that runs `fetch` and `extract` (any OS):
+
+```bash
+python3.12 -m venv .venv
+```
+
+```bash
+.venv/bin/python -m pip install -r requirements-extract.txt
+```
+
+On Windows the interpreter is `.venv\Scripts\python.exe`. The Candata
+computer also installs `requirements-fill.txt` (it needs only that file if it
+runs `fill` alone).
+
+Then:
+
+1. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`.
+2. Put the Gmail OAuth client in `secrets/gmail_client.json` (see "Gmail API" above).
+3. Set the Gmail label and `allowed_senders` in `config/settings.yaml`.
+
+Commands:
+
+| Command | What it does | Status |
+| --- | --- | --- |
+| `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
+| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx | Not implemented yet (#12) |
+| `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
+
+`main.py` forces CrewAI telemetry and tracing off even if `.env` says
+otherwise.
+
 ## Step 0: check that Candata's controls can be automated
 
 Before any RPA code is written, confirm that the Candata client exposes its
