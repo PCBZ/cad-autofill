@@ -11,8 +11,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Where a value came from: the three documents, the email body, or a person.
-Source = Literal["bl", "ci", "emf", "email", "human"]
+# The documents a value can be read from.
+Document = Literal["bl", "ci", "emf", "email"]
+# Where a value came from: a document, or a person who corrected it at review.
+Source = Document | Literal["human"]
 
 # Header values are scalars. An empty string means "not found in the documents".
 Scalar = str | int | float
@@ -30,7 +32,7 @@ class HeaderField(Strict):
     # What each document said, for fields that appear on more than one (bl_number,
     # packages, gross_weight, consignee). The validator compares these; `value` is the
     # one the reconciler chose, or what a person typed (source "human").
-    found: dict[Source, Scalar] = {}
+    found: dict[Document, Scalar] = {}
     confidence: float | None = Field(default=None, ge=0, le=1)
     page: int | None = Field(
         default=None, ge=1

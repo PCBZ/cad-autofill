@@ -7,6 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pydantic import ValidationError
+
 from src.schema import Shipment
 from src.validator import validate
 
@@ -166,6 +168,22 @@ class AgreementTests(unittest.TestCase):
                 (issue,) = run(with_header(name, found=found)).issues
                 self.assertEqual(issue.field, f"header.{name}")
 
+    def test_long_identifiers_that_differ_by_one_disagree(self):
+        data = with_header("bl_number", found={"bl": "1234567890", "emf": "1234567891"})
+        self.assertEqual([i.field for i in run(data).issues], ["header.bl_number"])
+
+    def test_numeric_looking_text_still_matches_for_numbers(self):
+        data = with_header("packages", found={"bl": "20", "emf": 20})
+        self.assertTrue(run(data).passed)
+
+    def test_number_with_a_unit_is_compared_as_text(self):
+        data = with_header("gross_weight", found={"bl": "1240 KGS", "emf": 1240})
+        self.assertFalse(run(data).passed)
+
+    def test_human_reading_cannot_be_in_found(self):
+        with self.assertRaises(ValidationError):
+            Shipment.model_validate(with_header("bl_number", found={"bl": "A", "human": "B"}))
+
     def test_three_documents_listed_in_the_message(self):
         data = with_header("bl_number", found={"bl": "A1", "ci": "A1", "emf": "B2"})
         (issue,) = run(data).issues
@@ -224,6 +242,23 @@ class AcceptanceTests(unittest.TestCase):
     def test_acceptance_for_other_values_does_not_hold(self):
         stale = {**self.ACCEPTED, "values": {"lines_sum": 2490.0, "ci": 2500.0}}
         result = run(self.short_shipment([stale]))
+        self.assertFalse(result.passed)
+        self.assertEqual(len(result.open_issues), 1)
+
+    def test_acceptance_reopens_when_a_large_value_changes_slightly(self):
+        found = {"bl": 1234567890, "ci": 9999999999}
+        data = with_header("packages", found=found)
+        accepted = {
+            "field": "header.packages",
+            "action": "accepted",
+            "values": found,
+            "by": "human",
+            "note": "ok",
+        }
+        data["review"] = [accepted]
+        self.assertTrue(run(data).passed)
+        data["header"]["packages"]["found"] = {"bl": 1234567891, "ci": 9999999999}
+        result = run(data)
         self.assertFalse(result.passed)
         self.assertEqual(len(result.open_issues), 1)
 

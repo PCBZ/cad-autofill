@@ -2,7 +2,7 @@
 
 * the sum of the invoice lines equals the invoice total, within a tolerance;
 * B/L number, packages, gross weight and consignee agree across the documents that
-  gave them (`HeaderField.found`).
+  gave them (`HeaderField.found`): text fields as text, numbers as numbers.
 
 `validate` returns a `Validation`. An issue a person accepted at review (a
 `ReviewAccepted` record for the same field and the same values) stays in the report
@@ -11,20 +11,18 @@ longer matches its acceptance and is open again.
 """
 
 import math
+from collections.abc import Callable
 
 from src.schema import (
+    Document,
     ReviewAccepted,
     Scalar,
     Shipment,
-    Source,
     Validation,
     ValidationIssue,
 )
 
-# Header fields that more than one document gives, so the documents can be compared.
-CROSS_CHECKED = ("bl_number", "packages", "gross_weight", "consignee")
-
-DOCUMENT_NAMES: dict[Source, str] = {"bl": "B/L", "ci": "CI", "emf": "EMF", "email": "email"}
+DOCUMENT_NAMES: dict[Document, str] = {"bl": "B/L", "ci": "CI", "emf": "EMF", "email": "email"}
 
 
 def validate(shipment: Shipment, *, amount_tolerance: float) -> Validation:
@@ -34,9 +32,8 @@ def validate(shipment: Shipment, *, amount_tolerance: float) -> Validation:
     ]
     accepted = [r for r in shipment.review if isinstance(r, ReviewAccepted)]
     for issue in issues:
-        issue.accepted = any(
-            r.field == issue.field and _same_found(r.values, issue.found) for r in accepted
-        )
+        # Exact match: if any reviewed value changed, the acceptance no longer holds.
+        issue.accepted = any(r.field == issue.field and r.values == issue.found for r in accepted)
     return Validation(passed=all(i.accepted for i in issues), issues=issues)
 
 
@@ -71,13 +68,13 @@ def _check_total(shipment: Shipment, tolerance: float) -> list[ValidationIssue]:
 
 def _check_agreement(shipment: Shipment) -> list[ValidationIssue]:
     issues = []
-    for name in CROSS_CHECKED:
-        field = getattr(shipment.header, name)
+    for name, field in shipment.header:
+        agree = AGREEMENT_RULES.get(name)
         # A value typed by a person is the final word; it is not compared again.
-        if field is None or field.source == "human":
+        if agree is None or field is None or field.source == "human":
             continue
         readings = {doc: v for doc, v in field.found.items() if v != ""}
-        if len(readings) < 2 or _agree(list(readings.values())):
+        if len(readings) < 2 or agree(list(readings.values())):
             continue
         names = [DOCUMENT_NAMES[doc] for doc in readings]
         issues.append(
@@ -99,26 +96,24 @@ def _number(value: Scalar) -> float | None:
         return None
 
 
-def _text(value: Scalar) -> str:
+def _same_text(values: list[Scalar]) -> bool:
     """Case, spacing and punctuation do not count as a difference."""
-    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
+    return len({"".join(ch for ch in str(v).casefold() if ch.isalnum()) for v in values}) == 1
 
 
-def _agree(values: list[Scalar]) -> bool:
+def _same_number(values: list[Scalar]) -> bool:
+    """`1,240.00` equals 1240. Text that is not a number is compared as text."""
     numbers = [_number(v) for v in values]
-    if all(n is not None for n in numbers):
-        return all(math.isclose(n, numbers[0], rel_tol=1e-9, abs_tol=1e-9) for n in numbers)
-    return len({_text(v) for v in values}) == 1
+    if any(n is None for n in numbers):
+        return _same_text(values)
+    return all(math.isclose(n, numbers[0], rel_tol=1e-9, abs_tol=1e-9) for n in numbers)
 
 
-def _same_found(accepted: dict[str, Scalar | None], found: dict[str, Scalar | None]) -> bool:
-    if accepted.keys() != found.keys():
-        return False
-    for key, a in accepted.items():
-        b = found[key]
-        if isinstance(a, int | float) and isinstance(b, int | float):
-            if not math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9):
-                return False
-        elif a != b:
-            return False
-    return True
+# Header fields that more than one document gives, and how their readings are compared.
+# Identifiers and names are text: a B/L number is never "close" to another one.
+AGREEMENT_RULES: dict[str, Callable[[list[Scalar]], bool]] = {
+    "bl_number": _same_text,
+    "consignee": _same_text,
+    "packages": _same_number,
+    "gross_weight": _same_number,
+}
