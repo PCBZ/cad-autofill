@@ -56,7 +56,7 @@ def main() -> int:
     print("请确认这是获公司允许的邮箱和设备。")
 
     try:
-        answer = input(f'继续请输入“{CONFIRMATION}”：').strip()
+        answer = input(f"继续请输入“{CONFIRMATION}”：").strip()
     except (EOFError, KeyboardInterrupt):
         print("已取消；未请求授权，也未访问 Gmail。")
         return 1
