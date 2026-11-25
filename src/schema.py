@@ -27,6 +27,10 @@ class Strict(BaseModel):
 class HeaderField(Strict):
     value: Scalar
     source: Source
+    # What each document said, for fields that appear on more than one (bl_number,
+    # packages, gross_weight, consignee). The validator compares these; `value` is the
+    # one the reconciler chose, or what a person typed (source "human").
+    found: dict[Source, Scalar] = {}
     confidence: float | None = Field(default=None, ge=0, le=1)
     page: int | None = Field(
         default=None, ge=1
@@ -90,11 +94,18 @@ class ValidationIssue(Strict):
     field: str  # "header.gross_weight", "invoice_total", ...
     issue: str
     found: dict[str, Scalar | None] = {}  # the value on each document, or the figures compared
+    accepted: bool = False  # a person accepted these exact values (see ReviewAccepted)
 
 
 class Validation(Strict):
+    """`passed` is true when every issue is accepted. Accepted issues stay listed."""
+
     passed: bool
     issues: list[ValidationIssue] = []
+
+    @property
+    def open_issues(self) -> list[ValidationIssue]:
+        return [i for i in self.issues if not i.accepted]
 
 
 class ReviewCorrected(Strict):
