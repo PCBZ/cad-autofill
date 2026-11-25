@@ -602,16 +602,17 @@ def verdict(results: dict[str, BackendMetrics]) -> list[str]:
         lines.append(f"NOTE: {uia.name_is_value} UIA inputs expose their value as Name; "
                      "Name is not a usable locator for them.")
 
-    best_read = max(m.values_read for m in ok.values())
-    if best_read == 0:
+    # Use the same backend as the input table. Mixing max(read) and min(unreadable)
+    # across backends can hide failures when another backend exposes no controls.
+    best = max(ok.values(), key=lambda m: (m.inputs, m.backend == "uia"))
+    if best.values_read == 0:
         lines.append(
             "READ-BACK: no non-empty values were read. Type test values into a few "
             "fields and rerun. If still empty, per-field read-back verification will "
             "need another method (e.g. select-all + copy).")
     else:
-        unreadable = min(m.values_unreadable for m in ok.values())
-        lines.append(f"READ-BACK: {best_read} input values read back; "
-                     f"{unreadable} inputs unreadable in the best backend. Compare the "
+        lines.append(f"READ-BACK ({best.backend}): {best.values_read} input values read back; "
+                     f"{best.values_unreadable} inputs unreadable. Compare the "
                      "values in the CSV with what you typed.")
     return lines
 
