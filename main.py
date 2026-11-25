@@ -13,6 +13,7 @@ Settings are always read from config/settings.toml. Only the standard library
 is imported at module level, so `fill` runs on the Candata computer with
 requirements-fill.txt alone (no CrewAI, no dotenv).
 """
+
 import sys
 
 if sys.version_info < (3, 11):
@@ -35,7 +36,7 @@ CREWAI_OFF = {
 }
 os.environ.update(CREWAI_OFF)
 
-EXIT_SETTINGS = 1        # settings.toml missing or invalid (argparse uses 2 for bad arguments)
+EXIT_SETTINGS = 1  # settings.toml missing or invalid (argparse uses 2 for bad arguments)
 EXIT_NOT_IMPLEMENTED = 3
 
 
