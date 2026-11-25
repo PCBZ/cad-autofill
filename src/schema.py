@@ -11,8 +11,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Where a value came from: the three documents, the email body, or a person.
-Source = Literal["bl", "ci", "emf", "email", "human"]
+# The documents a value can be read from.
+Document = Literal["bl", "ci", "emf", "email"]
+# Where a value came from: a document, or a person who corrected it at review.
+Source = Document | Literal["human"]
 
 # Header values are scalars. An empty string means "not found in the documents".
 Scalar = str | int | float
@@ -27,6 +29,10 @@ class Strict(BaseModel):
 class HeaderField(Strict):
     value: Scalar
     source: Source
+    # What each document said, for fields that appear on more than one (bl_number,
+    # packages, gross_weight, consignee). The validator compares these; `value` is the
+    # one the reconciler chose, or what a person typed (source "human").
+    found: dict[Document, Scalar] = {}
     confidence: float | None = Field(default=None, ge=0, le=1)
     page: int | None = Field(
         default=None, ge=1
@@ -90,11 +96,18 @@ class ValidationIssue(Strict):
     field: str  # "header.gross_weight", "invoice_total", ...
     issue: str
     found: dict[str, Scalar | None] = {}  # the value on each document, or the figures compared
+    accepted: bool = False  # a person accepted these exact values (see ReviewAccepted)
 
 
 class Validation(Strict):
+    """`passed` is true when every issue is accepted. Accepted issues stay listed."""
+
     passed: bool
     issues: list[ValidationIssue] = []
+
+    @property
+    def open_issues(self) -> list[ValidationIssue]:
+        return [i for i in self.issues if not i.accepted]
 
 
 class ReviewCorrected(Strict):
