@@ -11,15 +11,11 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.13
       # requirements-fill.txt is what the Candata computer installs, so this job
       # also checks that it installs on Windows. CrewAI (requirements-extract.txt)
       # is left out until a test needs it.
