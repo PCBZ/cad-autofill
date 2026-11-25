@@ -40,6 +40,7 @@ Useful options
 
 Exit codes: 0 ok, 1 environment problem, 2 no window found, 3 window minimized.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,18 +62,36 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = PROJECT_ROOT / "output" / "control_scans"
 
 # Verdict thresholds. These are heuristics; always read the CSV as well.
-MIN_INPUTS = 5                # fewer exposed inputs than this counts as "poor"
+MIN_INPUTS = 5  # fewer exposed inputs than this counts as "poor"
 GOOD_ADDRESSABLE_RATIO = 0.8  # share of inputs with a stable id or label
 
 # Windows whose title may contain "candata" but are not the Candata client:
 # browsers (help center), terminals (this script's own command line),
 # editors and Explorer (project folder name), PDF viewers, Excel.
 EXCLUDED_EXES = {
-    "chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe", "opera.exe",
-    "brave.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe",
-    "windowsterminal.exe", "openconsole.exe", "code.exe", "pycharm64.exe",
-    "devenv.exe", "notepad.exe", "notepad++.exe", "explorer.exe",
-    "acrobat.exe", "acrord32.exe", "excel.exe", "python.exe", "pythonw.exe",
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "iexplore.exe",
+    "opera.exe",
+    "brave.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "conhost.exe",
+    "windowsterminal.exe",
+    "openconsole.exe",
+    "code.exe",
+    "pycharm64.exe",
+    "devenv.exe",
+    "notepad.exe",
+    "notepad++.exe",
+    "explorer.exe",
+    "acrobat.exe",
+    "acrord32.exe",
+    "excel.exe",
+    "python.exe",
+    "pythonw.exe",
 }
 
 # If the matched window belongs to one of these, Candata is running remotely
@@ -104,6 +123,7 @@ TOKEN_ELEVATION_CLASS = 20
 # Data structures
 # --------------------------------------------------------------------------
 
+
 @dataclass
 class Candidate:
     hwnd: int
@@ -120,14 +140,14 @@ class Candidate:
 @dataclass
 class ControlRow:
     backend: str
-    kind: str             # input, combo_part, toggle, grid, button, custom, other
-    control_type: str     # uia control type, or win32 friendly class name
+    kind: str  # input, combo_part, toggle, grid, button, custom, other
+    control_type: str  # uia control type, or win32 friendly class name
     class_name: str
-    automation_id: str    # uia AutomationId; win32 control id (often unstable)
-    name: str             # uia Name (usually the label); win32 window text
+    automation_id: str  # uia AutomationId; win32 control id (often unstable)
+    name: str  # uia Name (usually the label); win32 window text
     parent_type: str
     value: str
-    value_status: str     # ok, empty, unreadable, n/a
+    value_status: str  # ok, empty, unreadable, n/a
     enabled: str
     visible: str
     rect: str
@@ -144,9 +164,9 @@ class BackendMetrics:
     grids: int = 0
     buttons: int = 0
     custom: int = 0
-    addressable: int | None = None     # uia only
-    name_is_value: int | None = None   # uia only: Name mirrors the value
-    duplicate_ids: int | None = None   # uia only
+    addressable: int | None = None  # uia only
+    name_is_value: int | None = None  # uia only: Name mirrors the value
+    duplicate_ids: int | None = None  # uia only
     values_read: int = 0
     values_empty: int = 0
     values_unreadable: int = 0
@@ -158,6 +178,7 @@ class BackendMetrics:
 # --------------------------------------------------------------------------
 # Win32 helpers (ctypes, loaded lazily so the module imports on any OS)
 # --------------------------------------------------------------------------
+
 
 @functools.lru_cache(maxsize=None)
 def _api() -> SimpleNamespace:
@@ -176,17 +197,28 @@ def _api() -> SimpleNamespace:
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.QueryFullProcessImageNameW.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
 
     advapi32.OpenProcessToken.argtypes = [
-        wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
     advapi32.OpenProcessToken.restype = wintypes.BOOL
     advapi32.GetTokenInformation.argtypes = [
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD)]
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     advapi32.GetTokenInformation.restype = wintypes.BOOL
 
     get_dpi = getattr(user32, "GetDpiForWindow", None)  # Windows 10 1607+
@@ -194,8 +226,14 @@ def _api() -> SimpleNamespace:
         get_dpi.argtypes = [wintypes.HWND]
         get_dpi.restype = wintypes.UINT
 
-    return SimpleNamespace(ctypes=ctypes, wintypes=wintypes, user32=user32,
-                           kernel32=kernel32, advapi32=advapi32, get_dpi=get_dpi)
+    return SimpleNamespace(
+        ctypes=ctypes,
+        wintypes=wintypes,
+        user32=user32,
+        kernel32=kernel32,
+        advapi32=advapi32,
+        get_dpi=get_dpi,
+    )
 
 
 def window_pid(hwnd: int) -> int:
@@ -245,8 +283,12 @@ def process_elevated(pid: int) -> bool | None:
             elevation = api.wintypes.DWORD()
             size = api.wintypes.DWORD()
             ok = api.advapi32.GetTokenInformation(
-                token, TOKEN_ELEVATION_CLASS, api.ctypes.byref(elevation),
-                api.ctypes.sizeof(elevation), api.ctypes.byref(size))
+                token,
+                TOKEN_ELEVATION_CLASS,
+                api.ctypes.byref(elevation),
+                api.ctypes.sizeof(elevation),
+                api.ctypes.byref(size),
+            )
             return bool(elevation.value) if ok else None
         finally:
             api.kernel32.CloseHandle(token)
@@ -257,6 +299,7 @@ def process_elevated(pid: int) -> bool | None:
 # --------------------------------------------------------------------------
 # Generic helpers
 # --------------------------------------------------------------------------
+
 
 def safe(fn, default=""):
     try:
@@ -281,6 +324,7 @@ def fmt_bool(value) -> str:
 # Window selection
 # --------------------------------------------------------------------------
 
+
 def enumerate_windows() -> list[Candidate]:
     from pywinauto import Desktop
 
@@ -288,13 +332,15 @@ def enumerate_windows() -> list[Candidate]:
     for w in Desktop(backend="win32").windows():
         hwnd = w.handle
         pid = window_pid(hwnd)
-        result.append(Candidate(
-            hwnd=hwnd,
-            title=safe(w.window_text),
-            pid=pid,
-            exe=process_exe(pid),
-            minimized=is_minimized(hwnd),
-        ))
+        result.append(
+            Candidate(
+                hwnd=hwnd,
+                title=safe(w.window_text),
+                pid=pid,
+                exe=process_exe(pid),
+                minimized=is_minimized(hwnd),
+            )
+        )
     return result
 
 
@@ -347,6 +393,7 @@ def pick_target(args, cands: list[Candidate]) -> tuple[Candidate | None, list[Ca
 # --------------------------------------------------------------------------
 # Scanning
 # --------------------------------------------------------------------------
+
 
 def classify(backend: str, control_type: str, class_name: str) -> str:
     cls = class_name.lower()
@@ -473,14 +520,17 @@ def compute_metrics(backend: str, rows: list[ControlRow]) -> BackendMetrics:
             return bool(r.name) and (r.name == r.value or r.name.endswith("same as value>"))
 
         m.name_is_value = sum(name_is_value(r) for r in inputs)
-        m.addressable = sum(bool(r.automation_id) or (bool(r.name) and not name_is_value(r))
-                            for r in inputs)
+        m.addressable = sum(
+            bool(r.automation_id) or (bool(r.name) and not name_is_value(r)) for r in inputs
+        )
         ids = Counter(r.automation_id for r in inputs if r.automation_id)
         m.duplicate_ids = sum(n for n in ids.values() if n > 1)
     return m
 
 
-def scan_backend(backend: str, hwnd: int, out_dir: Path, mask_values: bool) -> tuple[BackendMetrics, list[ControlRow]]:
+def scan_backend(
+    backend: str, hwnd: int, out_dir: Path, mask_values: bool
+) -> tuple[BackendMetrics, list[ControlRow]]:
     from pywinauto import Desktop
 
     spec = Desktop(backend=backend).window(handle=hwnd)
@@ -518,6 +568,7 @@ def scan_backend(backend: str, hwnd: int, out_dir: Path, mask_values: bool) -> t
 # Reporting
 # --------------------------------------------------------------------------
 
+
 def collect_environment(target: Candidate) -> tuple[dict[str, str], list[str]]:
     import pywinauto
 
@@ -527,6 +578,7 @@ def collect_environment(target: Candidate) -> tuple[dict[str, str], list[str]]:
     rect = "?"
     with contextlib.suppress(Exception):
         from pywinauto import Desktop
+
         rect = str(Desktop(backend="win32").window(handle=target.hwnd).wrapper_object().rectangle())
 
     env = {
@@ -547,19 +599,23 @@ def collect_environment(target: Candidate) -> tuple[dict[str, str], list[str]]:
         warnings.append(
             f"The window belongs to {REMOTE_CLIENT_EXES[target.exe.lower()]} ({target.exe}). "
             "Candata runs on a remote machine, so its controls are not visible here. "
-            "Run this script on the machine where Candata actually runs.")
+            "Run this script on the machine where Candata actually runs."
+        )
     if target_elev and not script_elev:
         warnings.append(
             "Candata runs elevated but this script does not. UI Automation will see "
-            "little or nothing inside the window. Rerun from an administrator prompt.")
+            "little or nothing inside the window. Rerun from an administrator prompt."
+        )
     elif target_elev is None and not script_elev:
         warnings.append(
             "Could not read Candata's privilege level. If it was started as "
-            "administrator, rerun this script from an administrator prompt.")
+            "administrator, rerun this script from an administrator prompt."
+        )
     if dpi and dpi != 96:
         warnings.append(
             f"Display scale is {round(dpi / 96 * 100)}%, not 100%. The design requires "
-            "100% for stable coordinates; locator-based results are still valid.")
+            "100% for stable coordinates; locator-based results are still valid."
+        )
     if sys.maxsize <= 2**32:
         warnings.append("Python is 32-bit. Use 64-bit Python as the design requires.")
     return env, warnings
@@ -576,43 +632,58 @@ def verdict(results: dict[str, BackendMetrics]) -> list[str]:
         lines.append(
             "NONE: no input controls exposed. Likely causes, in order: wrong window or "
             "screen; privilege mismatch; remote session (RDP/Citrix); custom-drawn UI. "
-            "Check the warnings, then the class names under 'top classes'.")
+            "Check the warnings, then the class names under 'top classes'."
+        )
         return lines
 
     uia = ok.get("uia")
-    if uia and uia.inputs >= MIN_INPUTS and uia.addressable is not None \
-            and uia.addressable / uia.inputs >= GOOD_ADDRESSABLE_RATIO:
+    if (
+        uia
+        and uia.inputs >= MIN_INPUTS
+        and uia.addressable is not None
+        and uia.addressable / uia.inputs >= GOOD_ADDRESSABLE_RATIO
+    ):
         lines.append(
             f"GOOD: {uia.addressable}/{uia.inputs} UIA inputs have an AutomationId or a "
-            "stable Name. Tier 1 (locate by control) is feasible for this screen.")
+            "stable Name. Tier 1 (locate by control) is feasible for this screen."
+        )
     elif best_inputs >= MIN_INPUTS:
         lines.append(
             "PARTIAL: inputs are exposed but many lack a stable AutomationId or Name. "
             "Plan for Tab navigation from known anchor controls (tier 2) for those "
-            "fields; check the CSV for which ones.")
+            "fields; check the CSV for which ones."
+        )
     else:
         lines.append(
             f"POOR: at most {best_inputs} input controls exposed. Expect Tab navigation "
-            "or coordinates (tier 2/3), or confirm this is the right screen.")
+            "or coordinates (tier 2/3), or confirm this is the right screen."
+        )
 
     if uia and uia.duplicate_ids:
-        lines.append(f"NOTE: {uia.duplicate_ids} UIA inputs share an AutomationId with another "
-                     "input; those need an extra criterion (parent, index) to locate.")
+        lines.append(
+            f"NOTE: {uia.duplicate_ids} UIA inputs share an AutomationId with another "
+            "input; those need an extra criterion (parent, index) to locate."
+        )
     if uia and uia.name_is_value:
-        lines.append(f"NOTE: {uia.name_is_value} UIA inputs expose their value as Name; "
-                     "Name is not a usable locator for them.")
+        lines.append(
+            f"NOTE: {uia.name_is_value} UIA inputs expose their value as Name; "
+            "Name is not a usable locator for them."
+        )
 
     best_read = max(m.values_read for m in ok.values())
     if best_read == 0:
         lines.append(
             "READ-BACK: no non-empty values were read. Type test values into a few "
             "fields and rerun. If still empty, per-field read-back verification will "
-            "need another method (e.g. select-all + copy).")
+            "need another method (e.g. select-all + copy)."
+        )
     else:
         unreadable = min(m.values_unreadable for m in ok.values())
-        lines.append(f"READ-BACK: {best_read} input values read back; "
-                     f"{unreadable} inputs unreadable in the best backend. Compare the "
-                     "values in the CSV with what you typed.")
+        lines.append(
+            f"READ-BACK: {best_read} input values read back; "
+            f"{unreadable} inputs unreadable in the best backend. Compare the "
+            "values in the CSV with what you typed."
+        )
     return lines
 
 
@@ -626,11 +697,14 @@ def metrics_lines(m: BackendMetrics) -> list[str]:
         f"unreadable={m.values_unreadable}",
     ]
     if m.addressable is not None:
-        lines.append(f"[{m.backend}] addressable inputs={m.addressable}/{m.inputs}  "
-                     f"name-is-value={m.name_is_value}  duplicate ids={m.duplicate_ids}")
+        lines.append(
+            f"[{m.backend}] addressable inputs={m.addressable}/{m.inputs}  "
+            f"name-is-value={m.name_is_value}  duplicate ids={m.duplicate_ids}"
+        )
     lines.append(f"[{m.backend}] tree dump {m.tree_seconds:.1f}s, walk {m.walk_seconds:.1f}s")
-    lines.append(f"[{m.backend}] top classes: "
-                 + ", ".join(f"{name} x{n}" for name, n in m.top_classes))
+    lines.append(
+        f"[{m.backend}] top classes: " + ", ".join(f"{name} x{n}" for name, n in m.top_classes)
+    )
     return lines
 
 
@@ -638,8 +712,10 @@ def input_table(rows: list[ControlRow], limit: int = 40) -> list[str]:
     inputs = [r for r in rows if r.kind == "input"]
     lines = [f"{'type':<10} {'automation_id':<28} {'name':<28} {'status':<10} value"]
     for r in inputs[:limit]:
-        lines.append(f"{truncate(r.control_type, 10):<10} {truncate(r.automation_id, 28):<28} "
-                     f"{truncate(r.name, 28):<28} {r.value_status:<10} {truncate(r.value, 30)}")
+        lines.append(
+            f"{truncate(r.control_type, 10):<10} {truncate(r.automation_id, 28):<28} "
+            f"{truncate(r.name, 28):<28} {r.value_status:<10} {truncate(r.value, 30)}"
+        )
     if len(inputs) > limit:
         lines.append(f"... {len(inputs) - limit} more in the CSV")
     return lines
@@ -649,18 +725,30 @@ def input_table(rows: list[ControlRow], limit: int = 40) -> list[str]:
 # Main
 # --------------------------------------------------------------------------
 
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
-        description="Read-only scan of the Candata client's controls for RPA feasibility.")
-    p.add_argument("--screen", default="screen",
-                   help="label for this screen, used as the output folder name (e.g. header)")
+        description="Read-only scan of the Candata client's controls for RPA feasibility."
+    )
+    p.add_argument(
+        "--screen",
+        default="screen",
+        help="label for this screen, used as the output folder name (e.g. header)",
+    )
     p.add_argument("--title", default="candata", help="window title regex, case-insensitive")
     p.add_argument("--process", default=None, help="process exe name regex, e.g. 'candata'")
-    p.add_argument("--handle", default=None, type=lambda s: int(s, 0),
-                   help="exact window handle to scan (decimal or 0x hex)")
+    p.add_argument(
+        "--handle",
+        default=None,
+        type=lambda s: int(s, 0),
+        help="exact window handle to scan (decimal or 0x hex)",
+    )
     p.add_argument("--backend", choices=("uia", "win32", "both"), default="both")
-    p.add_argument("--mask-values", action="store_true",
-                   help="do not write field values, only whether they were readable")
+    p.add_argument(
+        "--mask-values",
+        action="store_true",
+        help="do not write field values, only whether they were readable",
+    )
     p.add_argument("--list", action="store_true", help="list top-level windows and exit")
     p.add_argument("--out", default=str(DEFAULT_OUT), help="output root directory")
     args = p.parse_args(argv)
@@ -690,9 +778,11 @@ def main(argv=None) -> int:
         if args.handle is not None:
             print(f"No window with handle {args.handle:#x}.")
         else:
-            print(f"No window matched title /{args.title}/"
-                  + (f" and process /{args.process}/" if args.process else "")
-                  + ". Browsers, terminals and editors are excluded unless --process is given.")
+            print(
+                f"No window matched title /{args.title}/"
+                + (f" and process /{args.process}/" if args.process else "")
+                + ". Browsers, terminals and editors are excluded unless --process is given."
+            )
         print_candidates(cands, "\nTop-level windows:")
         print("\nRerun with --title, --process or --handle.")
         return 2
@@ -702,8 +792,7 @@ def main(argv=None) -> int:
         print_candidates(others, "Other matching windows (use --handle to pick one):")
 
     if target.minimized:
-        print("The window is minimized. Restore it and rerun; this script does not "
-              "touch windows.")
+        print("The window is minimized. Restore it and rerun; this script does not touch windows.")
         return 3
 
     env, warnings = collect_environment(target)
@@ -717,7 +806,8 @@ def main(argv=None) -> int:
         print(f"Scanning with {backend} backend...")
         try:
             results[backend], rows_by_backend[backend] = scan_backend(
-                backend, target.hwnd, out_dir, args.mask_values)
+                backend, target.hwnd, out_dir, args.mask_values
+            )
         except Exception as exc:
             results[backend] = BackendMetrics(backend=backend, ok=False, error=repr(exc))
 

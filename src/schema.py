@@ -5,6 +5,7 @@ design doc (wiki: Design).
 Only pydantic and the standard library are imported, so `fill` can load these
 models on the Candata computer too.
 """
+
 import datetime as dt
 from typing import Annotated, Literal
 
@@ -27,7 +28,9 @@ class HeaderField(Strict):
     value: Scalar
     source: Source
     confidence: float | None = Field(default=None, ge=0, le=1)
-    page: int | None = Field(default=None, ge=1)  # page of the source document, for the validation report
+    page: int | None = Field(
+        default=None, ge=1
+    )  # page of the source document, for the validation report
 
 
 class Email(Strict):
@@ -119,7 +122,9 @@ class Shipment(Strict):
 
     email: Email | None = None
     header: Header = Header()
-    invoice_total: HeaderField | None = None  # from the CI; used by validation, not typed into Candata
+    invoice_total: HeaderField | None = (
+        None  # from the CI; used by validation, not typed into Candata
+    )
     lines: list[Line] = []
     validation: Validation | None = None
     review: list[ReviewRecord] = []
