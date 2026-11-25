@@ -680,9 +680,11 @@ def verdict(results: dict[str, BackendMetrics]) -> list[str]:
             "need another method (e.g. select-all + copy)."
         )
     else:
-        lines.append(f"READ-BACK ({best.backend}): {best.values_read} input values read back; "
-                     f"{best.values_unreadable} inputs unreadable. Compare the "
-                     "values in the CSV with what you typed.")
+        lines.append(
+            f"READ-BACK ({best.backend}): {best.values_read} input values read back; "
+            f"{best.values_unreadable} inputs unreadable. Compare the "
+            "values in the CSV with what you typed."
+        )
     return lines
 
 

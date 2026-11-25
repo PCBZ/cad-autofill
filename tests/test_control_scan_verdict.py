@@ -8,8 +8,14 @@ from tools.scan_candata_controls import BackendMetrics, verdict
 class VerdictTests(unittest.TestCase):
     def test_empty_backend_cannot_hide_unreadable_input(self):
         results = {
-            "uia": BackendMetrics("uia", inputs=39, addressable=39,
-                                  values_read=23, values_empty=15, values_unreadable=1),
+            "uia": BackendMetrics(
+                "uia",
+                inputs=39,
+                addressable=39,
+                values_read=23,
+                values_empty=15,
+                values_unreadable=1,
+            ),
             "win32": BackendMetrics("win32"),
         }
         report = "\n".join(verdict(results))
@@ -20,8 +26,10 @@ class VerdictTests(unittest.TestCase):
             "uia": BackendMetrics("uia", inputs=5, addressable=5, values_read=5),
             "win32": BackendMetrics("win32", inputs=10, values_read=3, values_unreadable=7),
         }
-        self.assertIn("READ-BACK (win32): 3 input values read back; 7 inputs unreadable",
-                      "\n".join(verdict(results)))
+        self.assertIn(
+            "READ-BACK (win32): 3 input values read back; 7 inputs unreadable",
+            "\n".join(verdict(results)),
+        )
 
     def test_no_readable_values_on_selected_backend(self):
         results = {
