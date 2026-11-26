@@ -27,12 +27,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.toml"
 
-# CrewAI telemetry and tracing stay off whatever .env says: traces can contain
-# shipment text. Set before anything imports crewai.
+# CrewAI telemetry, tracing and the update check stay off whatever .env says: traces can
+# contain shipment text, and the update check is a request to pypi.org on every run.
+# Set before anything imports crewai (tools/check_crewai_offline.py verifies this).
 CREWAI_OFF = {
     "CREWAI_DISABLE_TELEMETRY": "true",
     "OTEL_SDK_DISABLED": "true",
     "CREWAI_TRACING_ENABLED": "false",
+    "CREWAI_DISABLE_VERSION_CHECK": "true",
 }
 os.environ.update(CREWAI_OFF)
 

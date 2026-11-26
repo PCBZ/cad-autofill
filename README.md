@@ -105,12 +105,13 @@ In Gmail, create a filter on the senders' addresses that applies the label
 - The Candata machine only runs `main.py fill`. It needs no OpenRouter key or
   Gmail credentials unless it also runs `fetch` and `extract`.
 - Always add these lines to `.env` so CrewAI sends no telemetry and no traces
-  (traces can contain shipment text):
+  (traces can contain shipment text) and does not check pypi.org for updates:
 
   ```
   CREWAI_DISABLE_TELEMETRY=true
   OTEL_SDK_DISABLED=true
   CREWAI_TRACING_ENABLED=false
+  CREWAI_DISABLE_VERSION_CHECK=true
   ```
 
 ### Before using real shipments
@@ -173,8 +174,9 @@ interpreter; without activating, use `.venv/bin/python` or
 | `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Not implemented yet (#12, #36) |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
-`main.py` forces CrewAI telemetry and tracing off even if `.env` says
-otherwise.
+`main.py` forces these CrewAI switches even if `.env` says otherwise. To see
+that no outside connection is attempted, run
+`python tools/check_crewai_offline.py` (needs `requirements-extract.txt`).
 
 ## Step 0: check that Candata's controls can be automated
 

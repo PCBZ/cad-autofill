@@ -1,5 +1,6 @@
 # main.py fetch and main.py extract. Runs on any computer. Python 3.11-3.13.
-# Minimum versions; pinned after integration testing (issue #14).
+# Minimum versions, except crewai: pinned to a version checked with
+# tools/check_crewai_offline.py (issue #14). Re-run that check before changing the pin.
 
 # Gmail intake
 google-api-python-client>=2.100
@@ -10,7 +11,7 @@ pymupdf>=1.24
 # paddleocr + paddlepaddle   # local OCR fallback for scanned PDFs (issue #29)
 
 # Orchestration and extraction: all models through OpenRouter
-crewai[litellm]>=1.15        # Claude Haiku 5.5 / Sonnet 5.5 via OpenRouter
+crewai[litellm]==1.15.45     # Claude Haiku 5.5 / Sonnet 5.5 via OpenRouter
 
 # Classification
 typesafe-sdk>=0.7.5          # Jev via OpenRouter
