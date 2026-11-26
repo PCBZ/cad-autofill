@@ -1,5 +1,4 @@
 # What the unit tests (tests/) import, and what the Windows CI job installs.
-# CrewAI (requirements-extract.txt) is left out until a test needs it.
 -r requirements-fill.txt
 -r requirements-gmail-test.txt
-pymupdf>=1.24
+-r requirements-extract.txt  # the Flow tests need CrewAI (they use a fake extractor, no API)

@@ -1,13 +1,16 @@
 """cad-autofill command line.
 
     python main.py fetch                      Gmail label -> inbox/<shipment>/
-    python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, xlsx
+    python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, import csv
     python main.py fill inbox/<shipment>      Candata: fill header, import lines, stop before submit
 
 `extract` resumes by itself after a validation failure: once every entry in
 output/<shipment>/corrections.toml is filled in, running it again applies the
 corrections and validates without calling the extraction crew. To start a
 shipment over, delete output/<shipment>/.
+
+Exit codes: 0 done, 1 settings error, 2 bad arguments, 3 not implemented yet,
+4 stopped for a person (a scanned PDF, or validation issues to correct).
 
 Settings are always read from config/settings.toml. Only the standard library
 is imported at module level, so `fill` runs on the Candata computer with
@@ -32,14 +35,23 @@ SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.toml"
 # Set before anything imports crewai (tools/check_crewai_offline.py verifies this).
 CREWAI_OFF = {
     "CREWAI_DISABLE_TELEMETRY": "true",
-    "OTEL_SDK_DISABLED": "true",
     "CREWAI_TRACING_ENABLED": "false",
     "CREWAI_DISABLE_VERSION_CHECK": "true",
 }
-os.environ.update(CREWAI_OFF)
+
+
+def apply_switches() -> None:
+    os.environ.update(CREWAI_OFF)
+    # Our own run trace (src/telemetry.py) uses the OpenTelemetry SDK, which does nothing
+    # at all when OTEL_SDK_DISABLED=true. CrewAI is kept quiet by the switches above.
+    os.environ.pop("OTEL_SDK_DISABLED", None)
+
+
+apply_switches()
 
 EXIT_SETTINGS = 1  # settings.toml missing or invalid (argparse uses 2 for bad arguments)
 EXIT_NOT_IMPLEMENTED = 3
+EXIT_NEEDS_PERSON = 4  # stopped on purpose: a scanned PDF, or open validation issues
 
 
 def load_env() -> None:
@@ -47,7 +59,7 @@ def load_env() -> None:
     from dotenv import load_dotenv  # requirements-extract.txt
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-    os.environ.update(CREWAI_OFF)
+    apply_switches()
 
 
 def load_settings() -> dict:
@@ -55,23 +67,32 @@ def load_settings() -> dict:
         return tomllib.load(f)
 
 
-def not_implemented(command: str, issue: str) -> int:
-    print(f"`{command}` is not implemented yet (see issue {issue}).", file=sys.stderr)
+def not_implemented(message: str) -> int:
+    print(message, file=sys.stderr)
     return EXIT_NOT_IMPLEMENTED
 
 
 def fetch(settings: dict) -> int:
     load_env()
-    return not_implemented("fetch", "#33")
+    return not_implemented("`fetch` is not implemented yet (see issue #33).")
 
 
 def extract(settings: dict, shipment: Path) -> int:
     load_env()
-    return not_implemented("extract", "#12")
+    from src.flow import OUTCOME_DONE, run_extract  # imports CrewAI, which fill does not need
+
+    output_dir = PROJECT_ROOT / settings["paths"]["output"] / shipment.name
+    try:
+        state = run_extract(settings, shipment, output_dir)
+    except NotImplementedError as e:
+        return not_implemented(str(e))
+    for message in state.messages:
+        print(message)
+    return 0 if state.outcome == OUTCOME_DONE else EXIT_NEEDS_PERSON
 
 
 def fill(settings: dict, shipment: Path) -> int:
-    return not_implemented("fill", "#28")
+    return not_implemented("`fill` is not implemented yet (see issue #28).")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
