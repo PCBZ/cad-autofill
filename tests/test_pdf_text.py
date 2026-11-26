@@ -90,6 +90,15 @@ class PdfTextTests(unittest.TestCase):
         (table,) = page.tables
         self.assertEqual(table.rows, TABLE)
 
+    def test_rotated_pages_give_the_same_table_and_text(self):
+        for rotation in (90, 180, 270):
+            with self.subTest(rotation=rotation):
+                doc = self.invoice()
+                doc[0].set_rotation(rotation)
+                (page,) = read_pdf(self.save(doc), min_chars_per_page=MIN_CHARS).pages
+                self.assertIn("INV-2026-0042", page.text)
+                self.assertEqual([t.rows for t in page.tables], [TABLE])
+
     def test_empty_cells_become_empty_strings(self):
         doc = pymupdf.open()
         add_grid(

@@ -1,17 +1,8 @@
-"""Read the text layer and the tables of a digital PDF with pymupdf.
+"""Read the text and tables of a digital PDF with pymupdf.
 
-`read_pdf` returns the text and the tables of every page, and says whether the
-PDF is a scan. A scanned PDF has no text layer to read, so the Flow's `load` step
-stops and hands the shipment to a person (the optional PaddleOCR fallback is
-issue #29).
-
-A PDF counts as scanned when its pages hold fewer than `min_chars_per_page`
-characters on average (`[text] min_chars_per_page` in settings.toml). The average
-keeps one short page, such as the back of a B/L, from flagging the whole file.
-Pages with little text are still listed in `low_text_pages`, so a scan stapled
-into a digital PDF is visible.
-
-Only pymupdf and pydantic are used; nothing leaves the computer.
+A PDF is `scanned` when its pages average fewer than `min_chars_per_page` characters
+(`[text]` in settings.toml): there is no text layer to read, so a person takes over.
+`low_text_pages` lists pages under the threshold, even when the PDF as a whole is fine.
 """
 
 from pathlib import Path
@@ -64,6 +55,9 @@ def read_pdf(path: str | Path, *, min_chars_per_page: int) -> PdfText:
 
 
 def _read_page(page: pymupdf.Page) -> PdfPage:
+    # Table detection and cell reads use different coordinate frames on a page with
+    # /Rotate set. Reading the page unrotated (in memory only) keeps them the same.
+    page.set_rotation(0)
     text = page.get_text("text", sort=True)
     tables = [_read_table(page, table) for table in page.find_tables().tables]
     return PdfPage(

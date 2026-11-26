@@ -25,16 +25,18 @@ def main() -> int:
     parser.add_argument("--min-chars", type=int, default=50, help="min_chars_per_page (default 50)")
     args = parser.parse_args()
 
-    pdfs = sorted(args.folder.glob("*.pdf"))
+    pdfs = sorted(p for p in args.folder.iterdir() if p.suffix.lower() == ".pdf")
     if not pdfs:
         print(f"no PDFs in {args.folder}", file=sys.stderr)
         return 1
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    failed = written = 0
     for pdf in pdfs:
         try:
             result = read_pdf(pdf, min_chars_per_page=args.min_chars)
         except PdfReadError as e:
             print(f"\n=== {pdf.name}: ERROR {e}")
+            failed += 1
             continue
         print(
             f"\n=== {pdf.name}: {len(result.pages)} pages, scanned={result.scanned}, "
@@ -49,8 +51,12 @@ def main() -> int:
                 lines.append(f"##### page {page.number}, table {i}")
                 lines += [" | ".join(row) for row in table.rows]
         (OUT_DIR / f"{pdf.stem}.txt").write_text("\n".join(lines), encoding="utf-8")
-    print(f"\nfull text written to {OUT_DIR}/")
-    return 0
+        written += 1
+    if written:
+        print(f"\nfull text written to {OUT_DIR}/")
+    if failed:
+        print(f"{failed} PDF(s) could not be read", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

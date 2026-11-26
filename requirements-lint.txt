@@ -1,0 +1,2 @@
+# Formatter used by the format CI job (config in pyproject.toml).
+ruff==0.17.6
