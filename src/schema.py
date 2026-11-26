@@ -193,3 +193,5 @@ class ShipmentState(BaseModel):
     shipment_dir: str = ""
     shipment: Shipment | None = None
     corrections: list[Correction] = []
+    outcome: str = ""  # how the run ended: one of the OUTCOME_* constants in flow.py
+    messages: list[str] = []  # what to tell the person running it
