@@ -24,9 +24,12 @@ Usage
 
        summary.txt          environment, warnings, metrics and verdict
        uia_controls.csv     every control with locator fields and read-back value
-       win32_controls.csv   same, using the win32 backend
-       uia_tree.txt         pywinauto print_control_identifiers() dump
+       win32_controls.csv   same, using the win32 backend (only with --backend win32|both)
+       uia_tree.txt         pywinauto print_control_identifiers() dump (only with --tree)
        win32_tree.txt
+
+A scan reads at most 1500 controls or 120 seconds per backend, prints progress, and
+keeps what it has read if it stops or you press Ctrl+C. Rows are written as they are read.
 
 Useful options
 --------------
@@ -34,7 +37,11 @@ Useful options
   --title REGEX       window title regex, case-insensitive (default: "candata")
   --process REGEX     only windows whose process exe name matches
   --handle HWND       scan exactly this window (decimal or 0x hex)
-  --backend NAME      uia, win32 or both (default: both)
+  --backend NAME      uia, win32 or both (default: uia)
+  --max-controls N    stop after N controls per backend (default 1500)
+  --time-limit SEC    stop after SEC seconds per backend (default 120)
+  --grids             also read inside data grids (thousands of cells; off by default)
+  --tree              also write the control tree dump (slow)
   --mask-values       record only whether a value was readable, not the value
   --out DIR           output root (default: <project>/output/control_scans)
 
@@ -59,6 +66,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROGRESS_EVERY = 50
 DEFAULT_OUT = PROJECT_ROOT / "output" / "control_scans"
 
 # Verdict thresholds. These are heuristics; always read the CSV as well.
@@ -171,7 +179,9 @@ class BackendMetrics:
     values_empty: int = 0
     values_unreadable: int = 0
     tree_seconds: float = 0.0
+    tree_dumped: bool = False
     walk_seconds: float = 0.0
+    stopped: str = ""  # why the walk ended early ("" = every control was read)
     top_classes: list[tuple[str, int]] = field(default_factory=list)
 
 
@@ -528,39 +538,105 @@ def compute_metrics(backend: str, rows: list[ControlRow]) -> BackendMetrics:
     return m
 
 
+def walk_controls(
+    root,
+    build,
+    on_row,
+    *,
+    max_controls: int,
+    max_depth: int,
+    time_limit: float,
+    descend_grids: bool = False,
+    progress=None,
+    clock=time.perf_counter,
+) -> str:
+    """Depth-first walk below `root`, reading each control with `build`.
+
+    Unlike pywinauto's descendants(), which lists the whole tree before returning (minutes
+    on a screen with a data grid), this reads one control at a time. It stops at
+    `max_controls` controls or after `time_limit` seconds, and every row is passed to
+    `on_row` as soon as it is read, so a stopped or interrupted scan keeps what it has.
+    Returns "" when every control was read, otherwise why the walk stopped.
+    """
+    deadline = clock() + time_limit
+    stack = [(child, 1) for child in reversed(root.children())]
+    count = 0
+    while stack:
+        if count >= max_controls:
+            return f"control limit {max_controls}"
+        if clock() > deadline:
+            return f"time limit {time_limit:g}s"
+        ctrl, depth = stack.pop()
+        row = build(ctrl)
+        on_row(row)
+        count += 1
+        if progress and count % PROGRESS_EVERY == 0:
+            progress(count)
+        if row.kind == "grid" and not descend_grids:
+            continue  # a data grid can hold thousands of cells
+        if depth < max_depth:
+            stack.extend((c, depth + 1) for c in reversed(safe(ctrl.children, [])))
+    return ""
+
+
 def scan_backend(
-    backend: str, hwnd: int, out_dir: Path, mask_values: bool
+    backend: str, hwnd: int, out_dir: Path, mask_values: bool, limits: argparse.Namespace
 ) -> tuple[BackendMetrics, list[ControlRow]]:
     from pywinauto import Desktop
 
     spec = Desktop(backend=backend).window(handle=hwnd)
     wrapper = spec.wrapper_object()
 
-    tree_path = out_dir / f"{backend}_tree.txt"
-    start = time.perf_counter()
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            spec.print_control_identifiers(depth=None)
-        tree_text = buf.getvalue()
-    except Exception as exc:
-        tree_text = buf.getvalue() + f"\n\n[tree dump failed: {exc!r}]\n"
-    tree_seconds = time.perf_counter() - start
-    tree_path.write_text(tree_text, encoding="utf-8")
+    tree_seconds = 0.0
+    if limits.tree:
+        print(f"  {backend}: dumping the control tree (slow; skip it by leaving out --tree)...")
+        tree_path = out_dir / f"{backend}_tree.txt"
+        start = time.perf_counter()
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                spec.print_control_identifiers(depth=None)
+            tree_text = buf.getvalue()
+        except Exception as exc:
+            tree_text = buf.getvalue() + f"\n\n[tree dump failed: {exc!r}]\n"
+        tree_seconds = time.perf_counter() - start
+        tree_path.write_text(tree_text, encoding="utf-8")
 
+    rows: list[ControlRow] = []
     start = time.perf_counter()
-    rows = [build_row(backend, c, mask_values) for c in wrapper.descendants()]
-    walk_seconds = time.perf_counter() - start
-
     csv_path = out_dir / f"{backend}_controls.csv"
     with csv_path.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=[f.name for f in fields(ControlRow)])
         writer.writeheader()
-        writer.writerows(asdict(r) for r in rows)
+
+        def on_row(row: ControlRow) -> None:
+            rows.append(row)
+            writer.writerow(asdict(row))
+            fh.flush()
+
+        def progress(count: int) -> None:
+            print(f"  {backend}: {count} controls, {time.perf_counter() - start:.0f}s", flush=True)
+
+        try:
+            stopped = walk_controls(
+                wrapper,
+                lambda c: build_row(backend, c, mask_values),
+                on_row,
+                max_controls=limits.max_controls,
+                max_depth=limits.max_depth,
+                time_limit=limits.time_limit,
+                descend_grids=limits.grids,
+                progress=progress,
+            )
+        except KeyboardInterrupt:
+            stopped = "interrupted with Ctrl+C"
+    walk_seconds = time.perf_counter() - start
 
     metrics = compute_metrics(backend, rows)
     metrics.tree_seconds = tree_seconds
+    metrics.tree_dumped = limits.tree
     metrics.walk_seconds = walk_seconds
+    metrics.stopped = stopped
     return metrics, rows
 
 
@@ -702,7 +778,12 @@ def metrics_lines(m: BackendMetrics) -> list[str]:
             f"[{m.backend}] addressable inputs={m.addressable}/{m.inputs}  "
             f"name-is-value={m.name_is_value}  duplicate ids={m.duplicate_ids}"
         )
-    lines.append(f"[{m.backend}] tree dump {m.tree_seconds:.1f}s, walk {m.walk_seconds:.1f}s")
+    tree = f"tree dump {m.tree_seconds:.1f}s" if m.tree_dumped else "tree dump skipped"
+    lines.append(f"[{m.backend}] {tree}, walk {m.walk_seconds:.1f}s")
+    if m.stopped:
+        lines.append(
+            f"[{m.backend}] PARTIAL: stopped early ({m.stopped}); only the controls above were read"
+        )
     lines.append(
         f"[{m.backend}] top classes: " + ", ".join(f"{name} x{n}" for name, n in m.top_classes)
     )
@@ -744,7 +825,35 @@ def parse_args(argv=None):
         type=lambda s: int(s, 0),
         help="exact window handle to scan (decimal or 0x hex)",
     )
-    p.add_argument("--backend", choices=("uia", "win32", "both"), default="both")
+    p.add_argument(
+        "--backend",
+        choices=("uia", "win32", "both"),
+        default="uia",
+        help="default uia. Use win32 or both if uia exposes few inputs (each backend adds a scan)",
+    )
+    p.add_argument(
+        "--max-controls",
+        type=int,
+        default=1500,
+        help="stop after this many controls per backend (default 1500)",
+    )
+    p.add_argument(
+        "--time-limit",
+        type=float,
+        default=120,
+        help="stop after this many seconds per backend (default 120)",
+    )
+    p.add_argument("--max-depth", type=int, default=25, help="deepest level to read (default 25)")
+    p.add_argument(
+        "--grids",
+        action="store_true",
+        help="also read inside data grids (can be thousands of cells; off by default)",
+    )
+    p.add_argument(
+        "--tree",
+        action="store_true",
+        help="also write the pywinauto control tree dump (slow; the CSV is usually enough)",
+    )
     p.add_argument(
         "--mask-values",
         action="store_true",
@@ -801,13 +910,17 @@ def main(argv=None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     backends = ("uia", "win32") if args.backend == "both" else (args.backend,)
+    print(
+        f"Reading at most {args.max_controls} controls or {args.time_limit:g}s per backend. "
+        "Press Ctrl+C to stop early; what was read so far is kept."
+    )
     results: dict[str, BackendMetrics] = {}
     rows_by_backend: dict[str, list[ControlRow]] = {}
     for backend in backends:
         print(f"Scanning with {backend} backend...")
         try:
             results[backend], rows_by_backend[backend] = scan_backend(
-                backend, target.hwnd, out_dir, args.mask_values
+                backend, target.hwnd, out_dir, args.mask_values, args
             )
         except Exception as exc:
             results[backend] = BackendMetrics(backend=backend, ok=False, error=repr(exc))
@@ -822,6 +935,12 @@ def main(argv=None) -> int:
     for m in results.values():
         report += ["  " + line for line in metrics_lines(m)]
     report += ["", "Verdict:"] + ["  " + line for line in verdict(results)]
+    if any(m.stopped for m in results.values()):
+        report += [
+            "  CAUTION: the scan stopped early, so the counts above cover only the controls "
+            "read. If inputs you expect are missing, rerun with a higher --max-controls or "
+            "--time-limit, or add --grids."
+        ]
 
     # Show inputs from the backend that exposed the most of them.
     ok = [m for m in results.values() if m.ok]
