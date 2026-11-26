@@ -16,10 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.13
-      # requirements-fill.txt is what the Candata computer installs, so this job
-      # also checks that it installs on Windows. CrewAI (requirements-extract.txt)
-      # is left out until a test needs it.
-      - run: python -m pip install -r requirements-fill.txt -r requirements-gmail-test.txt
+      # requirements-test.txt includes requirements-fill.txt, which the Candata computer
+      # installs, so this job also checks that it installs on Windows.
+      - run: python -m pip install -r requirements-test.txt
       - run: python -m unittest discover -s tests -v
 
   format:
@@ -29,5 +28,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.13
-      - run: python -m pip install ruff==0.17.6
+      - run: python -m pip install -r requirements-lint.txt
       - run: ruff format --check --diff .
