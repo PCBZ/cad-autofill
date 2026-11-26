@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 EXPECTED = {
     "CREWAI_DISABLE_TELEMETRY": "true",
-    "OTEL_SDK_DISABLED": "true",
     "CREWAI_TRACING_ENABLED": "false",
     "CREWAI_DISABLE_VERSION_CHECK": "true",
 }
@@ -32,10 +31,19 @@ class CrewAiSwitchTests(unittest.TestCase):
             for name, value in EXPECTED.items():
                 self.assertEqual(os.environ[name], value, name)
 
+    def test_otel_sdk_is_not_disabled(self):
+        # The run trace uses the OpenTelemetry SDK, which does nothing when this is "true".
+        import main
+
+        with patch.dict(os.environ, {"OTEL_SDK_DISABLED": "true"}):
+            importlib.reload(main)
+            self.assertNotIn("OTEL_SDK_DISABLED", os.environ)
+
     def test_env_example_lists_every_switch(self):
         text = (Path(__file__).resolve().parent.parent / ".env.example").read_text()
         for name, value in EXPECTED.items():
             self.assertIn(f"{name}={value}", text)
+        self.assertNotIn("OTEL_SDK_DISABLED", text)
 
 
 if __name__ == "__main__":

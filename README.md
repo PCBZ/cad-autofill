@@ -109,7 +109,6 @@ In Gmail, create a filter on the senders' addresses that applies the label
 
   ```
   CREWAI_DISABLE_TELEMETRY=true
-  OTEL_SDK_DISABLED=true
   CREWAI_TRACING_ENABLED=false
   CREWAI_DISABLE_VERSION_CHECK=true
   ```
@@ -174,7 +173,8 @@ interpreter; without activating, use `.venv/bin/python` or
 | `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import xlsx. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Partly: reads the PDFs and runs the Flow, stops at the extraction crew (#9). Corrections (#36) and xlsx (#11) not yet |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
-`main.py` forces these CrewAI switches even if `.env` says otherwise. To see
+`main.py` forces these CrewAI switches even if `.env` says otherwise, and removes
+`OTEL_SDK_DISABLED` (it would also switch off the program's own local run trace). To see
 that no outside connection is attempted, run
 `python tools/check_crewai_offline.py` (needs `requirements-extract.txt`).
 

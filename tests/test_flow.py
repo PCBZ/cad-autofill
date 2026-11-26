@@ -176,28 +176,38 @@ class FlowTests(unittest.TestCase):
         state = self.run_flow(FakeExtractor(make_shipment()))
         self.assertEqual(state.outcome, OUTCOME_UNREADABLE)
 
-    def test_run_log_has_steps_but_no_document_text(self):
+    def spans(self) -> list[dict]:
+        text = (self.output_dir / "trace.jsonl").read_text()
+        return [json.loads(line) for line in text.splitlines()]
+
+    def test_trace_has_steps_but_no_document_text(self):
         self.add_pdfs()
         self.run_flow(FakeExtractor(make_shipment()))
-        text = (self.output_dir / "run_log.jsonl").read_text()
-        steps = [json.loads(line)["step"] for line in text.splitlines()]
-        self.assertEqual(steps, ["load", "extract", "validate", "classify", "write_excel", "run"])
+        text = (self.output_dir / "trace.jsonl").read_text()
+        spans = self.spans()
+        self.assertEqual(
+            [s["name"] for s in spans],
+            ["load", "extract", "validate", "classify", "write_excel", "run"],
+        )
+        load = spans[0]
+        self.assertEqual(load["attributes"]["pdfs"], 3)
+        self.assertEqual(load["resource"]["attributes"]["shipment"], "20261123-abc")
+        self.assertEqual(spans[-1]["attributes"]["outcome"], "done")
         self.assertNotIn("INV-2026", text)
         self.assertNotIn("Shenzhen", text)
 
-    def test_run_log_marks_a_failed_step(self):
+    def test_trace_marks_a_failed_step_without_the_message(self):
+        from src.flow import run_extract
+
         self.add_pdfs()
         with self.assertRaises(NotImplementedError):
-            from src.flow import run_extract
-
             run_extract(SETTINGS, self.shipment_dir, self.output_dir)
-        entries = [
-            json.loads(line)
-            for line in (self.output_dir / "run_log.jsonl").read_text().splitlines()
-        ]
-        self.assertEqual(
-            [(e["step"], e["ok"]) for e in entries], [("load", True), ("extract", False)]
-        )
+        spans = {s["name"]: s for s in self.spans()}
+        self.assertEqual(spans["load"]["status"]["status_code"], "UNSET")
+        self.assertEqual(spans["extract"]["status"]["status_code"], "ERROR")
+        self.assertEqual(spans["extract"]["status"]["description"], "NotImplementedError")
+        self.assertEqual(spans["extract"]["events"], [])  # no exception text recorded
+        self.assertEqual(spans["run"]["status"]["status_code"], "ERROR")
 
 
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")

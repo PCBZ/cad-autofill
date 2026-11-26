@@ -12,13 +12,13 @@ apply_corrections and the full review files (#36), classify (#18, #19), write_ex
 The Flow state is not persisted: a stopped run resumes from output/<shipment>/shipment.json.
 """
 
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 from crewai.flow.flow import Flow, listen, or_, router, start
+from opentelemetry.trace import Span
 
-from src.run_log import RunLog
+from src.telemetry import RunTrace
 from src.schema import Email, Shipment, ShipmentState
 from src.text.pdf_text import PdfReadError, PdfText, read_pdf
 from src import validator
@@ -50,7 +50,7 @@ class ShipmentFlow(Flow[ShipmentState]):
         self.output_dir = output_dir
         self.settings = settings
         self.extractor = extractor
-        self.run_log = RunLog(output_dir / "run_log.jsonl")
+        self.trace = RunTrace(output_dir / "trace.jsonl", shipment=shipment_dir.name)
         self.documents: list[PdfText] = []
         self.email: Email | None = None
         self.state.shipment_dir = str(shipment_dir)
@@ -59,10 +59,10 @@ class ShipmentFlow(Flow[ShipmentState]):
 
     @start()
     def load(self) -> None:
-        with self.run_log.step("load") as facts:
+        with self.trace.step("load") as span:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             if (self.output_dir / "corrections.toml").exists():
-                facts["mode"] = "resume"
+                span.set_attribute("mode", "resume")
                 saved = self.output_dir / "shipment.json"
                 if not saved.exists():
                     return self._stop(
@@ -72,12 +72,12 @@ class ShipmentFlow(Flow[ShipmentState]):
                     saved.read_text(encoding="utf-8")
                 )
                 return
-            facts["mode"] = "fresh"
-            self._read_inputs(facts)
+            span.set_attribute("mode", "fresh")
+            self._read_inputs(span)
 
-    def _read_inputs(self, facts: dict) -> None:
+    def _read_inputs(self, span: Span) -> None:
         pdfs = sorted(p for p in self.shipment_dir.iterdir() if p.suffix.lower() == ".pdf")
-        facts["pdfs"] = len(pdfs)
+        span.set_attribute("pdfs", len(pdfs))
         if not pdfs:
             return self._stop(OUTCOME_NO_PDFS, f"no PDF files in {self.shipment_dir}")
         min_chars = self.settings["text"]["min_chars_per_page"]
@@ -116,12 +116,12 @@ class ShipmentFlow(Flow[ShipmentState]):
 
     @listen("fresh")
     def extract(self) -> None:
-        with self.run_log.step("extract") as facts:
+        with self.trace.step("extract") as span:
             shipment = self.extractor(self.documents)
             if shipment.email is None:
                 shipment.email = self.email
             self.state.shipment = shipment
-            facts["lines"] = len(shipment.lines)
+            span.set_attribute("lines", len(shipment.lines))
 
     @listen("resume")
     def apply_corrections(self) -> None:
@@ -133,18 +133,18 @@ class ShipmentFlow(Flow[ShipmentState]):
 
     @router(or_(extract, apply_corrections))
     def validate(self) -> str:
-        with self.run_log.step("validate") as facts:
+        with self.trace.step("validate") as span:
             tolerance = self.settings["validation"]["amount_tolerance"]
             result = validator.validate(self.state.shipment, amount_tolerance=tolerance)
             self.state.shipment.validation = result
-            facts["open_issues"] = len(result.open_issues)
+            span.set_attribute("open_issues", len(result.open_issues))
             return "passed" if result.passed else "failed"
 
     @listen("failed")
     def write_review(self) -> None:
         # Stub: saves the shipment and a short report. The full review files
         # (corrections.toml with one entry per open issue) are issue #36.
-        with self.run_log.step("write_review"):
+        with self.trace.step("write_review"):
             self._save()
             self._stop(
                 OUTCOME_NEEDS_REVIEW,
@@ -157,13 +157,13 @@ class ShipmentFlow(Flow[ShipmentState]):
 
     @listen("passed")
     def classify(self) -> None:
-        with self.run_log.step("classify") as facts:
-            facts["skipped"] = "Jev classification is milestone M2 (issues #18, #19)"
+        with self.trace.step("classify") as span:
+            span.set_attribute("skipped", "Jev classification is milestone M2 (issues #18, #19)")
 
     @listen(classify)
     def write_excel(self) -> None:
-        with self.run_log.step("write_excel") as facts:
-            facts["skipped"] = "excel_writer is issue #11"
+        with self.trace.step("write_excel") as span:
+            span.set_attribute("skipped", "excel_writer is issue #11")
             self._save()
             self.state.outcome = OUTCOME_DONE
             self.state.messages.append(
@@ -204,7 +204,10 @@ def run_extract(
     flow = ShipmentFlow(
         shipment_dir=shipment_dir, output_dir=output_dir, settings=settings, extractor=extractor
     )
-    started = time.monotonic()
-    flow.kickoff()
-    flow.run_log.record("run", time.monotonic() - started, outcome=flow.state.outcome)
+    try:
+        with flow.trace.step("run") as span:
+            flow.kickoff()
+            span.set_attribute("outcome", flow.state.outcome)
+    finally:
+        flow.trace.close()
     return flow.state

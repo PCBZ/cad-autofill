@@ -35,11 +35,19 @@ SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.toml"
 # Set before anything imports crewai (tools/check_crewai_offline.py verifies this).
 CREWAI_OFF = {
     "CREWAI_DISABLE_TELEMETRY": "true",
-    "OTEL_SDK_DISABLED": "true",
     "CREWAI_TRACING_ENABLED": "false",
     "CREWAI_DISABLE_VERSION_CHECK": "true",
 }
-os.environ.update(CREWAI_OFF)
+
+
+def apply_switches() -> None:
+    os.environ.update(CREWAI_OFF)
+    # Our own run trace (src/telemetry.py) uses the OpenTelemetry SDK, which does nothing
+    # at all when OTEL_SDK_DISABLED=true. CrewAI is kept quiet by the switches above.
+    os.environ.pop("OTEL_SDK_DISABLED", None)
+
+
+apply_switches()
 
 EXIT_SETTINGS = 1  # settings.toml missing or invalid (argparse uses 2 for bad arguments)
 EXIT_NOT_IMPLEMENTED = 3
@@ -51,7 +59,7 @@ def load_env() -> None:
     from dotenv import load_dotenv  # requirements-extract.txt
 
     load_dotenv(PROJECT_ROOT / ".env", override=False)
-    os.environ.update(CREWAI_OFF)
+    apply_switches()
 
 
 def load_settings() -> dict:
