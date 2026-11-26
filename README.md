@@ -228,6 +228,26 @@ python tools/scan_candata_controls.py --screen header --handle 0x1A2B3C
 If real shipment data is on screen, add `--mask-values` so field values are
 not written to disk.
 
+### If a scan is slow
+
+A scan reads at most 1500 controls or 120 seconds, prints progress every 50 controls,
+and writes each row as it is read. Press `Ctrl+C` to stop early; everything read so far
+is kept and `summary.txt` says the scan was partial. By default it uses the `uia`
+backend only, skips data-grid cells, and does not dump the control tree.
+
+Add options only when you need them:
+
+```
+python tools/scan_candata_controls.py --screen header --backend both
+python tools/scan_candata_controls.py --screen invoice --max-controls 5000 --time-limit 600
+python tools/scan_candata_controls.py --screen invoice --grids
+python tools/scan_candata_controls.py --screen header --tree
+```
+
+`--backend both` (or `win32`) is for when `uia` exposes few inputs. `--grids` reads inside
+data grids, which can be thousands of cells. `--tree` writes the full tree dump, which is
+the slowest part and usually not needed.
+
 ### Output
 
 Results go to `output/control_scans/<screen>/` (ignored by git):
@@ -235,9 +255,9 @@ Results go to `output/control_scans/<screen>/` (ignored by git):
 | File | Contents |
 | --- | --- |
 | `summary.txt` | Environment, warnings, per-backend metrics, verdict, list of inputs |
-| `uia_controls.csv` | Every control: type, AutomationId, Name, parent, read-back value |
-| `win32_controls.csv` | The same, using the win32 backend |
-| `uia_tree.txt`, `win32_tree.txt` | Full control trees from pywinauto |
+| `uia_controls.csv` | Every control read: type, AutomationId, Name, parent, read-back value |
+| `win32_controls.csv` | The same, using the win32 backend (only with `--backend win32` or `both`) |
+| `uia_tree.txt`, `win32_tree.txt` | Full control trees from pywinauto (only with `--tree`) |
 
 ### What to check
 
@@ -274,7 +294,7 @@ Open `summary.txt` first.
    is normally a standard Windows dialog.
 
 Send the `summary.txt` files (and the CSVs if the verdict is not GOOD) to the
-developer. They decide how `rpa_filler` and `rpa_importer` locate each field
+developer. If a summary says PARTIAL, say so. They decide how `rpa_filler` and `rpa_importer` locate each field
 and fill `config/header_fields.toml`.
 
 `top classes` in the summary names the UI toolkit (for example
