@@ -168,6 +168,14 @@ class FlowTests(unittest.TestCase):
             self.run_flow(extractor)
         self.assertEqual(extractor.calls, [])
 
+    def test_unreadable_email_json_stops(self):
+        from src.flow import OUTCOME_UNREADABLE
+
+        self.add_pdfs()
+        (self.shipment_dir / "email.json").mkdir()
+        state = self.run_flow(FakeExtractor(make_shipment()))
+        self.assertEqual(state.outcome, OUTCOME_UNREADABLE)
+
     def test_resume_without_saved_shipment_stops(self):
         from src.flow import OUTCOME_UNREADABLE
 
@@ -187,7 +195,7 @@ class FlowTests(unittest.TestCase):
         spans = self.spans()
         self.assertEqual(
             [s["name"] for s in spans],
-            ["load", "extract", "validate", "classify", "write_excel", "run"],
+            ["load", "extract", "validate", "classify", "write_csv", "run"],
         )
         load = spans[0]
         self.assertEqual(load["attributes"]["pdfs"], 3)

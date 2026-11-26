@@ -1,7 +1,7 @@
 """cad-autofill command line.
 
     python main.py fetch                      Gmail label -> inbox/<shipment>/
-    python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, xlsx
+    python main.py extract inbox/<shipment>   PDFs -> shipment JSON, validation report, import csv
     python main.py fill inbox/<shipment>      Candata: fill header, import lines, stop before submit
 
 `extract` resumes by itself after a validation failure: once every entry in

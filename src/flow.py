@@ -1,13 +1,13 @@
 """ShipmentFlow: the fixed order of the extract command.
 
-    load -> extract -> validate -+- passed -> classify -> write_excel -> done
+    load -> extract -> validate -+- passed -> classify -> write_csv -> done
                                  `- failed -> write_review -> stop for a person
     load (corrections.toml found) -> apply_corrections -> validate -> ...
 
 Only extraction needs a model, so it is the one step passed in from outside
 (`extractor`); tests and the real extraction crew (issue #9) plug in there. The other
 steps are code. Steps that belong to later issues are stubs that say so:
-apply_corrections and the full review files (#36), classify (#18, #19), write_excel (#11).
+apply_corrections and the full review files (#36), classify (#18, #19), write_csv (#11).
 
 The Flow state is not persisted: a stopped run resumes from output/<shipment>/shipment.json.
 """
@@ -99,7 +99,7 @@ class ShipmentFlow(Flow[ShipmentState]):
         if email_file.exists():
             try:
                 self.email = Email.model_validate_json(email_file.read_text(encoding="utf-8"))
-            except ValueError as e:
+            except (OSError, ValueError) as e:
                 return self._stop(OUTCOME_UNREADABLE, f"email.json is not valid: {e}")
 
     def _stop(self, outcome: str, message: str) -> None:
@@ -153,7 +153,7 @@ class ShipmentFlow(Flow[ShipmentState]):
                 "(corrections.toml is not written yet, issue #36)",
             )
 
-    # --- classify, write_excel --------------------------------------------------
+    # --- classify, write_csv --------------------------------------------------
 
     @listen("passed")
     def classify(self) -> None:
@@ -161,13 +161,13 @@ class ShipmentFlow(Flow[ShipmentState]):
             span.set_attribute("skipped", "Jev classification is milestone M2 (issues #18, #19)")
 
     @listen(classify)
-    def write_excel(self) -> None:
-        with self.trace.step("write_excel") as span:
-            span.set_attribute("skipped", "excel_writer is issue #11")
+    def write_csv(self) -> None:
+        with self.trace.step("write_csv") as span:
+            span.set_attribute("skipped", "csv_writer is issue #11")
             self._save()
             self.state.outcome = OUTCOME_DONE
             self.state.messages.append(
-                f"done: {self.output_dir / 'shipment.json'} (no xlsx yet, issue #11)"
+                f"done: {self.output_dir / 'shipment.json'} (no csv yet, issue #11)"
             )
 
     # --- outputs ----------------------------------------------------------------
