@@ -1,7 +1,7 @@
 """The extraction crew: B/L, CI and EMF specialists in parallel, then a reconciler.
 
-    documents -> which PDF is which (code) -> bl, ci, emf tasks (async) -> reconciler
-              -> build_shipment (code) -> Shipment
+    documents -> which PDF is which (code) -> bl, ci, ci_lines, emf tasks (async)
+              -> reconciler (bl, ci, emf) -> build_shipment (code) -> Shipment
 
 Agent and task text is in config/agents.yaml and config/tasks.yaml (the
 CrewAI convention; settings stay in settings.toml) next to this file;
@@ -25,6 +25,7 @@ from src.crews.extraction import guardrails
 from src.crews.extraction.models import (
     SHARED_FIELDS,
     BLReading,
+    CILines,
     CIReading,
     EMFReading,
     Reading,
@@ -38,12 +39,14 @@ from src.text.pdf_text import PdfText
 CONFIG_DIR = Path(__file__).parent / "config"
 DOCUMENTS: tuple[SpecialistDocument, ...] = ("bl", "ci", "emf")
 DOCUMENT_NAMES = {"bl": "bill of lading", "ci": "commercial invoice", "emf": "eManifest"}
-READING_MODELS: dict[SpecialistDocument, type[BaseModel]] = {
-    "bl": BLReading,
-    "ci": CIReading,
-    "emf": EMFReading,
+# The specialist tasks: name -> (document it reads, output model, guardrail check).
+# The invoice has two tasks, header and lines, so each has one purpose and one output.
+SPECIALISTS: dict[str, tuple[SpecialistDocument, type[BaseModel], guardrails.Check]] = {
+    "bl": ("bl", BLReading, guardrails.check_bl),
+    "ci": ("ci", CIReading, guardrails.check_ci),
+    "ci_lines": ("ci", CILines, guardrails.check_ci_lines),
+    "emf": ("emf", EMFReading, guardrails.check_emf),
 }
-CHECKS = {"bl": guardrails.check_bl, "ci": guardrails.check_ci, "emf": guardrails.check_emf}
 
 
 class _NoTaskOutputStorage:
@@ -139,23 +142,22 @@ def build_crew(
         return Agent(**agents_text[name], llm=llm, allow_delegation=False, tools=[], verbose=False)
 
     tasks: dict[str, Task] = {}
-    for kind in DOCUMENTS:
+    for name, (kind, model, check) in SPECIALISTS.items():
         doc = by_kind[kind]
         pages = len(doc.pages)
-        model = READING_MODELS[kind]
-        text = tasks_text[kind]
-        tasks[kind] = Task(
-            name=kind,
+        text = tasks_text[name]
+        tasks[name] = Task(
+            name=name,
             # str.replace, not format: the document may contain braces.
             description=text["description"]
             .replace("{rules}", rules)
             .replace("{document}", render(doc)),
             expected_output=text["expected_output"],
-            agent=agent(kind),
+            agent=agent(name),  # one agent per parallel task: CrewAI cannot share one
             output_pydantic=model,
             async_execution=True,
             guardrail=guardrails.make_guardrail(
-                model, lambda parsed, check=CHECKS[kind], pages=pages: check(parsed, pages)
+                model, lambda parsed, check=check, pages=pages: check(parsed, pages)
             ),
             guardrail_max_retries=max_retries,
         )
@@ -206,7 +208,7 @@ def extract_shipment(
         raise
     _record_usage(crew)
     out = {name: task.output.pydantic for name, task in tasks.items()}
-    return build_shipment(out["bl"], out["ci"], out["emf"], out["reconciler"])
+    return build_shipment(out["bl"], out["ci"], out["ci_lines"], out["emf"], out["reconciler"])
 
 
 def make_extractor(settings: dict):
@@ -232,7 +234,9 @@ def _field(reading: Reading, source: SpecialistDocument) -> HeaderField:
     return HeaderField(value=reading.value, source=source, page=reading.page)
 
 
-def build_shipment(bl: BLReading, ci: CIReading, emf: EMFReading, rec: Reconciled) -> Shipment:
+def build_shipment(
+    bl: BLReading, ci: CIReading, ci_lines: CILines, emf: EMFReading, rec: Reconciled
+) -> Shipment:
     readings: dict[SpecialistDocument, BaseModel] = {"bl": bl, "ci": ci, "emf": emf}
     header: dict[str, HeaderField] = {}
     for kind, model in readings.items():
@@ -264,5 +268,5 @@ def build_shipment(bl: BLReading, ci: CIReading, emf: EMFReading, rec: Reconcile
     return Shipment(
         header=Header(**header),
         invoice_total=_field(ci.invoice_total, "ci"),
-        lines=ci.lines,
+        lines=ci_lines.lines,
     )

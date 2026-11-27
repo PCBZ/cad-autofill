@@ -46,6 +46,11 @@ class CIReading(Strict):
     # For cross-checking against the B/L, when the invoice prints them.
     bl_number: Reading = Reading()
     consignee: Reading = Reading()
+
+
+class CILines(Strict):
+    """The invoice table, read by its own task: one purpose, one output."""
+
     lines: list[Line] = []
 
 

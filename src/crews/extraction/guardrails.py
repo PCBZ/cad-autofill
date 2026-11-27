@@ -17,6 +17,7 @@ from pydantic import BaseModel, ValidationError
 from src.crews.extraction.models import (
     SHARED_FIELDS,
     BLReading,
+    CILines,
     CIReading,
     EMFReading,
     Reading,
@@ -109,6 +110,11 @@ def check_ci(ci: CIReading, pages: int) -> list[str]:
     currency = str(ci.currency.value)
     if currency and not re.fullmatch(r"[A-Z]{3}", currency):
         problems.append(f"currency: {currency!r} must be a three-letter ISO code such as USD")
+    return problems
+
+
+def check_ci_lines(ci: CILines, pages: int) -> list[str]:
+    problems = []
     if not ci.lines:
         problems.append("lines: no invoice lines; list every line of the invoice table")
     numbers = [line.line_no for line in ci.lines]

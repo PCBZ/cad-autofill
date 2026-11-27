@@ -96,8 +96,8 @@ CI = {
     "currency": r("USD"),
     "invoice_total": r(2500.0, 2),
     "consignee": r("ACME CO LTD"),
-    "lines": LINES,
 }
+CI_LINES = {"lines": LINES}
 EMF = {
     "cargo_control_number": r("1234PARS0001"),
     "eta": r("2026-11-30T08:00"),
@@ -139,7 +139,7 @@ if HAVE_CREWAI:
 
 
 def fake_llm(**overrides) -> "FakeLLM":
-    replies = {"bl": BL, "ci": CI, "emf": EMF, "reconciler": RECONCILED}
+    replies = {"bl": BL, "ci": CI, "ci_lines": CI_LINES, "emf": EMF, "reconciler": RECONCILED}
     queues = {}
     for name, reply in replies.items():
         given = overrides.get(name, [reply])
@@ -259,10 +259,19 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("three-letter", self.ci_problems(currency=r("US$"))[0])
         self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("20/11/2026"))[0])
         self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("20261120"))[0])
-        self.assertIn("no invoice lines", self.ci_problems(lines=[])[0])
-        self.assertIn("1, 2, 3", self.ci_problems(lines=[LINES[1]])[0])
+
+    def test_ci_lines_formats(self):
+        from src.crews.extraction.guardrails import check_ci_lines
+        from src.crews.extraction.models import CILines
+
+        def problems(lines):
+            return check_ci_lines(CILines(lines=lines), 2)
+
+        self.assertEqual(problems(LINES), [])
+        self.assertIn("no invoice lines", problems([])[0])
+        self.assertIn("1, 2, 3", problems([LINES[1]])[0])
         china = [{**LINES[0], "country_of_origin": "China"}, LINES[1]]
-        self.assertIn("two-letter", self.ci_problems(lines=china)[0])
+        self.assertIn("two-letter", problems(china)[0])
 
     def test_page_past_the_end_fails(self):
         self.assertIn("page 5", self.ci_problems(invoice_number=r("INV-1", 5))[0])
@@ -304,11 +313,18 @@ class GuardrailTests(unittest.TestCase):
 class BuildShipmentTests(unittest.TestCase):
     def build(self, rec=RECONCILED, **changes):
         from src.crews.extraction.crew import build_shipment
-        from src.crews.extraction.models import BLReading, CIReading, EMFReading, Reconciled
+        from src.crews.extraction.models import (
+            BLReading,
+            CILines,
+            CIReading,
+            EMFReading,
+            Reconciled,
+        )
 
         return build_shipment(
             BLReading.model_validate(changes.get("bl", BL)),
             CIReading.model_validate(changes.get("ci", CI)),
+            CILines.model_validate(changes.get("ci_lines", CI_LINES)),
             EMFReading.model_validate(changes.get("emf", EMF)),
             Reconciled.model_validate(rec),
         )
@@ -371,7 +387,7 @@ class CrewRunTests(unittest.TestCase):
         self.assertEqual(shipment.header.bl_number.value, "MAEU123456789")
         self.assertEqual(shipment.header.cargo_control_number.value, "1234PARS0001")
         self.assertEqual(len(shipment.lines), 2)
-        self.assertEqual(sorted(llm.prompts), ["bl", "ci", "emf", "reconciler"])
+        self.assertEqual(sorted(llm.prompts), ["bl", "ci", "ci_lines", "emf", "reconciler"])
 
     def test_each_specialist_sees_only_its_document(self):
         llm = fake_llm()
@@ -394,6 +410,24 @@ class CrewRunTests(unittest.TestCase):
         self.assertEqual(len(llm.prompts["ci"]), 2)
         self.assertIn("three-letter", llm.prompts["ci"][1])
         self.assertEqual(shipment.header.currency.value, "USD")
+
+    def test_rejected_lines_do_not_make_the_header_read_again(self):
+        llm = fake_llm(ci_lines=[{"lines": [LINES[1]]}, CI_LINES])
+        shipment = self.extract(llm)
+        self.assertEqual(len(llm.prompts["ci_lines"]), 2)
+        self.assertIn("1, 2, 3", llm.prompts["ci_lines"][1])
+        self.assertEqual(len(llm.prompts["ci"]), 1)
+        self.assertEqual([line.line_no for line in shipment.lines], [1, 2])
+
+    def test_reconciler_does_not_get_the_lines(self):
+        llm = fake_llm()
+        self.extract(llm)
+        self.assertNotIn("7318.15", llm.prompts["reconciler"][0])
+
+    def test_expected_output_reaches_the_model_unchanged(self):
+        llm = fake_llm()
+        self.extract(llm)
+        self.assertIn('{\\"value\\": \\"\\", \\"page\\": null}', llm.prompts["bl"][0])
 
     def test_answers_that_keep_failing_stop_for_a_person(self):
         from src.flow import ExtractionError
@@ -421,10 +455,10 @@ class ConfigTests(unittest.TestCase):
         config = HERE.parent / "src" / "crews" / "extraction" / "config"
         agents = yaml.safe_load((config / "agents.yaml").read_text(encoding="utf-8"))
         tasks = yaml.safe_load((config / "tasks.yaml").read_text(encoding="utf-8"))
-        for name in ("bl", "ci", "emf", "reconciler"):
+        for name in ("bl", "ci", "ci_lines", "emf", "reconciler"):
             self.assertEqual(set(agents[name]), {"role", "goal", "backstory"}, name)
             self.assertEqual(set(tasks[name]), {"description", "expected_output"}, name)
-        for name in ("bl", "ci", "emf"):
+        for name in ("bl", "ci", "ci_lines", "emf"):
             self.assertIn("{document}", tasks[name]["description"])
             self.assertIn("{rules}", tasks[name]["description"])
 

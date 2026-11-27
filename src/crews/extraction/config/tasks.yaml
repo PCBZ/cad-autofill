@@ -1,6 +1,9 @@
 # Extraction crew tasks. crew.py reads this with yaml.safe_load and passes the text to
 # crewai.Task. `{rules}` is replaced by shared.rules, and `{document}` by the text of the
 # PDF (in code, with str.replace: document text may contain braces).
+#
+# description: what to read and how. expected_output: exactly what the answer contains.
+# The JSON shape itself comes from the task's output model (models.py).
 
 shared:
   rules: |-
@@ -25,30 +28,68 @@ bl:
     BEGIN DOCUMENT
     {document}
     END DOCUMENT
-  expected_output: The bill of lading fields, each with its value and page.
+  expected_output: |-
+    One JSON object with the fields bl_number, shipper, consignee, port_of_loading,
+    port_of_discharge, packages, package_type, gross_weight, vessel_voyage and container.
+    Each field is {"value": ..., "page": N}:
+    - bl_number: text, never empty (every B/L has one);
+    - shipper, consignee: the party name only, without the address;
+    - packages: a number (20, not "20 CTNS"); package_type: the unit as printed (CTN, PLT, ...);
+    - gross_weight: a number in kg;
+    - vessel_voyage: vessel name and voyage number as printed;
+    - container: container numbers, comma-separated.
+    A field the document does not give is {"value": "", "page": null}.
 
 ci:
   description: |-
-    Read this commercial invoice and report: invoice number, invoice date, vendor
-    (seller), purchaser (buyer), currency (ISO code such as USD), incoterms, invoice total, and
-    the B/L number and consignee if the invoice prints them.
-
-    Then list every line of the invoice table, in order, numbered from 1: description, HS code
-    exactly as printed ("" if none), country of origin as a two-letter ISO code (CN, US, ...),
-    quantity, unit, unit price and amount. Do not add lines for freight, insurance or
-    subtotals; those are not goods.
+    Read the header of this commercial invoice and report: invoice number, invoice date,
+    vendor (seller), purchaser (buyer), currency, incoterms, invoice total, and the B/L
+    number and consignee if the invoice prints them. Do not list the invoice lines; another
+    task does that.
 
     {rules}
 
     BEGIN DOCUMENT
     {document}
     END DOCUMENT
-  expected_output: The invoice header fields with value and page, and every invoice line.
+  expected_output: |-
+    One JSON object with the fields invoice_number, invoice_date, vendor, purchaser,
+    currency, incoterms, invoice_total, bl_number and consignee.
+    Each field is {"value": ..., "page": N}:
+    - invoice_number: text, never empty (every invoice has one);
+    - invoice_date: YYYY-MM-DD;
+    - vendor, purchaser, consignee: the party name only, without the address;
+    - currency: a three-letter ISO code (USD, CNY, CAD);
+    - incoterms: the term as printed (FOB, CIF, EXW, ...), with its place if printed;
+    - invoice_total: a number, the grand total of the invoice;
+    - bl_number, consignee: only if the invoice prints them, otherwise "".
+    A field the document does not give is {"value": "", "page": null}.
+
+ci_lines:
+  description: |-
+    Copy every goods line of the invoice table in this commercial invoice, in order. A
+    table may continue over several pages. Do not add lines for freight, insurance,
+    discounts or subtotals; those are not goods.
+
+    {rules}
+
+    BEGIN DOCUMENT
+    {document}
+    END DOCUMENT
+  expected_output: |-
+    One JSON object {"lines": [...]} with one entry per goods line, in invoice order and
+    numbered from 1 (line_no 1, 2, 3, ...). Each entry has:
+    - description: as printed;
+    - hs_code: exactly as printed, dots and leading zeros kept; "" if the line has none;
+    - country_of_origin: a two-letter ISO code (CN, US, ...); "" if not given;
+    - quantity, unit_price, amount: numbers;
+    - unit: as printed (PCS, KG, SET, ...).
+    The list is never empty: an invoice has at least one line.
 
 emf:
   description: |-
-    Read this eManifest and report: cargo control number (CCN), carrier code,
-    port of entry, ETA (estimated arrival), and for cross-checking the B/L number, number of
+    Read this eManifest and report: cargo control number (CCN), carrier code, port of
+    entry, ETA (estimated arrival), and for cross-checking the B/L number, number of
     packages and gross weight it gives.
 
     {rules}
@@ -56,18 +97,31 @@ emf:
     BEGIN DOCUMENT
     {document}
     END DOCUMENT
-  expected_output: The eManifest fields, each with its value and page.
+  expected_output: |-
+    One JSON object with the fields cargo_control_number, carrier_code, port_of_entry,
+    eta, bl_number, packages and gross_weight.
+    Each field is {"value": ..., "page": N}:
+    - cargo_control_number: as printed, never empty (every eManifest has one);
+    - carrier_code: the four-character carrier code as printed;
+    - port_of_entry: the port code or name as printed;
+    - eta: YYYY-MM-DD, or YYYY-MM-DDTHH:MM when a time is given;
+    - bl_number: text; packages and gross_weight (kg): numbers.
+    A field the document does not give is {"value": "", "page": null}.
 
 reconciler:
   description: |-
     You have the readings of the bill of lading (bl), commercial invoice (ci) and
-    eManifest (emf) specialists. For each of these fields, pick one value and say which document
-    it is from: B/L number, consignee, packages, gross weight.
+    eManifest (emf) specialists. For each of these fields, pick one value and say which
+    document it is from: B/L number, consignee, packages, gross weight.
 
     - Only pick from a document that gave the field. Leave the field out if none did.
     - When documents agree, pick the B/L.
-    - When they disagree, pick the value most likely to be right, and add a note naming the field
-      and what each document says. Do not make up a value no document gives.
+    - When they disagree, pick the value most likely to be right, and add a note naming the
+      field and what each document says. Do not make up a value no document gives.
     - A party name may be spelled differently on different documents (full or short name,
       "Co." or "Company"). Pick the B/L spelling and note it only if they may be different parties.
-  expected_output: The chosen value and source document for each shared field, and notes on conflicts.
+  expected_output: |-
+    One JSON object with the fields bl_number, consignee, packages and gross_weight, each
+    {"value": ..., "source": "bl" | "ci" | "emf"} or null when no document gives it, and
+    "notes": a list of short sentences, one per conflict (empty when the documents agree).
+    The value is copied from the source document's reading, not changed.
