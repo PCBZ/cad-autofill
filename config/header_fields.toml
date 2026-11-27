@@ -5,6 +5,8 @@
 # CCI Add creates a new CCI (user confirmed); it was not clicked during scanning.
 # The filler is not implemented and must explicitly support/validate this schema.
 # Do not pass label-based candidates directly as pywinauto child_window kwargs.
+# port_of_loading, port_of_discharge, invoice_number, invoice_date, incoterms are
+# deferred (not needed for now, business decision 2026-11-26); no tier 2/3 fields.
 
 [meta]
 schema_version = 1
@@ -87,16 +89,16 @@ readback = "nonempty_observed"
 notes = "User confirms this CCI Consignee address means delivery address. Do not automatically copy a document consignee's registered address or the separate Delivery Party block. Resolve the intended delivery address before filling; lookup behavior remains untested."
 
 [port_of_loading]
-strategy = "unresolved"
-status = "blocked_mapping"
+strategy = "deferred"
+status = "not_needed"
 type = "autocomplete"
-notes = "No verified port-of-loading target. Do not equate it with Port of Exit without business confirmation."
+notes = "Deferred per business decision (issue #4, 2026-11-26): not needed for now. Prior finding: no verified port-of-loading target; do not equate it with Port of Exit without business confirmation."
 
 [port_of_discharge]
-strategy = "unresolved"
-status = "blocked_mapping"
+strategy = "deferred"
+status = "not_needed"
 type = "autocomplete"
-notes = "Unlading Port is a candidate label only; confirm semantic equivalence and screen context before selecting it."
+notes = "Deferred per business decision (issue #4, 2026-11-26): not needed for now. Prior finding: Unlading Port is a candidate label only; confirm semantic equivalence and screen context before selecting it."
 
 [packages]
 strategy = "tier1"
@@ -150,16 +152,16 @@ readback = "nonempty_observed"
 notes = "Confirm multiple-container delimiter and capacity before enabling."
 
 [invoice_number]
-strategy = "unresolved"
-status = "blocked_mapping"
+strategy = "deferred"
+status = "not_needed"
 type = "text"
-notes = "Invoice screen exposes Reference, but its equivalence to invoice_number is not verified. Do not map by guess."
+notes = "Deferred per business decision (issue #4, 2026-11-26): not needed for now. Prior finding: Invoice screen exposes Reference, but its equivalence to invoice_number is not verified; do not map by guess."
 
 [invoice_date]
-strategy = "unresolved"
-status = "blocked_mapping"
+strategy = "deferred"
+status = "not_needed"
 type = "date"
-notes = "No invoice-date control identified. Do not substitute Direct Shipment Date or ETA Date."
+notes = "Deferred per business decision (issue #4, 2026-11-26): not needed for now. Prior finding: no invoice-date control identified; do not substitute Direct Shipment Date or ETA Date."
 
 [vendor]
 strategy = "tier1"
@@ -191,7 +193,7 @@ readback = "code_not_exposed_in_scan"
 notes = "CCI scan exposes an unnamed Edit beside Currency, unlike the earlier invoice-page candidate. Do not use the adjacent exchange-rate text as currency code. Verify code readback and lookup selection before enabling writes."
 
 [incoterms]
-strategy = "unresolved"
-status = "blocked_mapping"
+strategy = "deferred"
+status = "not_needed"
 type = "autocomplete"
-notes = "No verified Incoterms target. Freight amount/payment terms do not establish an Incoterms mapping."
+notes = "Deferred per business decision (issue #4, 2026-11-26): not needed for now. Prior finding: no verified Incoterms target; freight amount/payment terms do not establish an Incoterms mapping."
