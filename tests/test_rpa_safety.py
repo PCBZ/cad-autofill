@@ -63,12 +63,14 @@ class EmergencyStopTests(unittest.TestCase):
 
 
 class FocusTests(unittest.TestCase):
-    def test_same_foreground_window_passes(self):
-        check_focus(0x1000, get_foreground_hwnd=lambda: 0x1000)  # does not raise
+    def test_same_process_foreground_passes(self):
+        # Also covers Candata's own dialogs (file picker, drop-down, confirmation):
+        # a different hwnd, but still Candata's process, so this is not lost focus.
+        check_focus(1234, get_foreground_pid=lambda: 1234)  # does not raise
 
-    def test_different_foreground_window_raises(self):
+    def test_different_process_foreground_raises(self):
         with self.assertRaises(FocusLost):
-            check_focus(0x1000, get_foreground_hwnd=lambda: 0x2000)
+            check_focus(1234, get_foreground_pid=lambda: 5678)
 
 
 class WaitUntilTests(unittest.TestCase):
@@ -129,13 +131,28 @@ class UnknownWindowTests(unittest.TestCase):
         self.assertEqual(shots, ["popup.png"])
         self.assertIn("Windows Update", str(ctx.exception))
 
-    def test_blank_titles_are_never_unexpected(self):
+    def test_a_blank_or_missing_title_is_unexpected_by_default(self):
+        # An untitled modal is exactly the kind of surprise this check exists to
+        # catch, so a blank/missing title must not be let through unconditionally.
+        for titles in (["", "Candata"], [None, "Candata"]):
+            with self.subTest(titles=titles):
+                shots = []
+                with self.assertRaises(UnexpectedWindow):
+                    check_for_unknown_windows(
+                        lambda title: title == "Candata",
+                        list_titles=lambda titles=titles: titles,
+                        screenshot=shots.append,
+                        screenshot_path="popup.png",
+                    )
+                self.assertEqual(shots, ["popup.png"])
+
+    def test_a_blank_title_can_be_explicitly_allowed(self):
         check_for_unknown_windows(
-            lambda title: False,  # would reject every real title
-            list_titles=lambda: ["", None],
+            lambda title: title in {"", "Candata"},
+            list_titles=lambda: ["", "Candata"],
             screenshot=lambda path: (_ for _ in ()).throw(AssertionError("should not screenshot")),
             screenshot_path="unused.png",
-        )  # does not raise: blank/missing titles are skipped, not flagged
+        )  # does not raise
 
 
 class PreRunConfirmationTests(unittest.TestCase):

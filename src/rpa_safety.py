@@ -99,28 +99,40 @@ def _default_unregister(handle: object) -> None:
 
 
 def check_focus(
-    target_hwnd: int,
+    target_pid: int,
     *,
-    get_foreground_hwnd: Callable[[], int] | None = None,
+    get_foreground_pid: Callable[[], int] | None = None,
 ) -> None:
-    """Raise `FocusLost` if `target_hwnd` is not the foreground window.
+    """Raise `FocusLost` if the foreground window does not belong to Candata's process.
 
-    Call this before each action: a click or keystroke sent while some other window
-    has focus (an operator's own click, a popup stealing focus) lands on the wrong
-    window instead of Candata.
+    Call this before each action: a click or keystroke sent while some other process
+    has focus (the operator's own click, an unrelated app stealing focus) lands on
+    the wrong window instead of Candata. This compares process IDs, not window
+    handles, so Candata's own dialogs (the import file picker, a drop-down's list,
+    a confirmation popup) do not look like lost focus just because they are a
+    different hwnd; whether such a dialog is itself expected is for
+    `check_for_unknown_windows` to decide, not this check.
     """
-    get_foreground_hwnd = get_foreground_hwnd or _default_foreground_hwnd
-    current = get_foreground_hwnd()
-    if current != target_hwnd:
+    get_foreground_pid = get_foreground_pid or _default_foreground_pid
+    current = get_foreground_pid()
+    if current != target_pid:
         raise FocusLost(
-            f"Candata (hwnd={target_hwnd:#x}) is no longer focused (foreground hwnd={current:#x})"
+            f"Candata (pid={target_pid}) is no longer focused (foreground pid={current})"
         )
 
 
-def _default_foreground_hwnd() -> int:
+def _default_foreground_pid() -> int:
     import ctypes
+    from ctypes import wintypes
 
-    return ctypes.windll.user32.GetForegroundWindow()
+    user32 = ctypes.windll.user32
+    # The ctypes default return type is c_int (signed); left at that default, a
+    # handle with its high bit set comes back negative.
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    hwnd = user32.GetForegroundWindow()
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
 
 
 def wait_until(
@@ -156,20 +168,28 @@ def wait_until(
 def check_for_unknown_windows(
     is_expected: Callable[[str], bool],
     *,
-    list_titles: Callable[[], Iterable[str]],
+    list_titles: Callable[[], Iterable[str | None]],
     screenshot: Callable[[str], None],
     screenshot_path: str,
 ) -> None:
     """Raise `UnexpectedWindow` for any open window `is_expected` rejects.
 
     A window neither Candata nor one the caller is waiting for (an error dialog, a
-    Windows Update prompt, a crash report) means something unplanned happened.
-    `screenshot` is called with `screenshot_path` before raising, so the operator can
-    see what appeared; `list_titles` and `screenshot` are injected so this needs no
-    real desktop to test.
+    Windows Update prompt, a crash report, an untitled modal) means something
+    unplanned happened. A blank or missing title is passed to `is_expected` as `""`
+    rather than skipped, since an untitled popup is exactly the kind of surprise
+    this check exists to catch; a caller that does expect blank titles (some
+    Candata dialogs may have none) must say so explicitly, for example with
+    `is_expected=lambda title: title in {"", "Candata", ...}`.
+
+    `list_titles` should list only Candata's own top-level windows, not the whole
+    desktop: an unrelated app (Outlook, a browser) must not stop the run just for
+    being open. `screenshot` is called with `screenshot_path` before raising, so
+    the operator can see what appeared; `list_titles` and `screenshot` are injected
+    so this needs no real desktop to test.
     """
     for title in list_titles():
-        if title and not is_expected(title):
+        if not is_expected(title or ""):
             screenshot(screenshot_path)
             raise UnexpectedWindow(
                 f"unexpected window {title!r}; screenshot saved to {screenshot_path}"
