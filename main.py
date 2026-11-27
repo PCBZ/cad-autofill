@@ -49,7 +49,7 @@ def apply_switches() -> None:
 
 apply_switches()
 
-EXIT_SETTINGS = 1  # settings.toml missing or invalid (argparse uses 2 for bad arguments)
+EXIT_SETTINGS = 1  # settings.toml missing or invalid, or the model key missing (argparse uses 2 for bad arguments)
 EXIT_NOT_IMPLEMENTED = 3
 EXIT_NEEDS_PERSON = 4  # stopped on purpose: a scanned PDF, or open validation issues
 
@@ -79,11 +79,17 @@ def fetch(settings: dict) -> int:
 
 def extract(settings: dict, shipment: Path) -> int:
     load_env()
-    from src.flow import OUTCOME_DONE, run_extract  # imports CrewAI, which fill does not need
+    model = settings["models"]["extraction"]
+    if model.startswith("openrouter/") and not os.environ.get("OPENROUTER_API_KEY"):
+        print("OPENROUTER_API_KEY is not set (put it in .env; see README).", file=sys.stderr)
+        return EXIT_SETTINGS
+    # These import CrewAI, which fill does not need.
+    from src.crews.extraction.crew import make_extractor
+    from src.flow import OUTCOME_DONE, run_extract
 
     output_dir = PROJECT_ROOT / settings["paths"]["output"] / shipment.name
     try:
-        state = run_extract(settings, shipment, output_dir)
+        state = run_extract(settings, shipment, output_dir, extractor=make_extractor(settings))
     except NotImplementedError as e:
         return not_implemented(str(e))
     for message in state.messages:
