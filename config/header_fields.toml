@@ -1,0 +1,197 @@
+# Issue #4: locator strategy DRAFT, not an executable/approved fill configuration.
+# All 20 src.schema.Header fields are represented. No shipment values are stored.
+# Evidence: local header and invoice UIA scans, 2026-11-24; Design wiki data table.
+# Additional evidence: read-only CCI scan and user-confirmed business meanings.
+# CCI Add creates a new CCI (user confirmed); it was not clicked during scanning.
+# The filler is not implemented and must explicitly support/validate this schema.
+# Do not pass label-based candidates directly as pywinauto child_window kwargs.
+
+[meta]
+schema_version = 1
+status = "draft"
+automation_enabled = false
+design_url = "https://github.com/PCBZ/cad-autofill/wiki/Design#data-structure"
+issue = 4
+backend = "uia"
+scan_scale_percent = 125
+coordinate_baseline_percent = 100
+require_unique_match = true
+require_readback = true
+on_missing_or_ambiguous = "stop_for_manual_review"
+# Numeric AutomationIds changed between scans. None are used as selectors here.
+# No tier-2 Tab sequence or tier-3 coordinate has been measured/approved.
+fallback_enabled = false
+
+[bl_number]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "header"
+type = "text"
+locator = { title = "Bill of Lading", control_type = "Edit" }
+readback = "nonempty_observed"
+notes = "Scope to shipment header; require one match and reconfirm after reopening."
+
+[cargo_control_number]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "header"
+type = "text"
+locator = { title = "Cargo Control #", control_type = "Edit" }
+readback = "nonempty_observed"
+
+[carrier_code]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "header"
+type = "autocomplete"
+candidate = { label = "Carrier", label_type = "Text", control_type = "Edit", relation = "same_row_right_in_field_container" }
+readback = "empty_observed"
+notes = "Input Name is blank. Verify parent/label association and exact-match candidate selection. Do not use global Edit index."
+
+[port_of_entry]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "header"
+type = "autocomplete"
+candidate = { label = "Port", label_type = "Text", control_type = "Edit", relation = "same_row_right_in_field_container" }
+readback = "empty_observed"
+notes = "Observed as Edit, not the design example's ComboBox. Confirm Port means port of entry and validate code formatting before enabling."
+
+[eta]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "header"
+type = "datetime"
+candidate = { label = "ETA Date", label_type = "Text", control_type = "Edit", relation = "date_and_time_in_labeled_container" }
+readback = "nonempty_observed"
+notes = "Adjacent date and time inputs exist. Resolve both roles and confirm date format/timezone; do not put the combined value in one box."
+
+[shipper]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "cci"
+type = "party"
+locator = { title = "Shipper", control_type = "Edit" }
+scope = "selected CCI / Parties"
+readback = "empty_observed"
+notes = "Independent named Shipper control observed. Require unique match in the selected CCI; party lookup behavior remains untested. Do not substitute Vendor."
+
+[consignee]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "cci"
+type = "party"
+locator = { title = "Consignee", control_type = "Edit" }
+scope = "selected CCI / Parties"
+readback = "nonempty_observed"
+notes = "User confirms this CCI Consignee address means delivery address. Do not automatically copy a document consignee's registered address or the separate Delivery Party block. Resolve the intended delivery address before filling; lookup behavior remains untested."
+
+[port_of_loading]
+strategy = "unresolved"
+status = "blocked_mapping"
+type = "autocomplete"
+notes = "No verified port-of-loading target. Do not equate it with Port of Exit without business confirmation."
+
+[port_of_discharge]
+strategy = "unresolved"
+status = "blocked_mapping"
+type = "autocomplete"
+notes = "Unlading Port is a candidate label only; confirm semantic equivalence and screen context before selecting it."
+
+[packages]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "cci"
+type = "integer"
+scope = "selected CCI / Invoice Details"
+candidate = { label = "Count", label_type = "Text", control_type = "Edit", relation = "direct_edit_child_of_container_following_label" }
+readback = "nonempty_observed"
+notes = "User confirms Count is package quantity. Distinguish the direct quantity Edit from the nested packaging-code Edit in the same container. Reconfirm unique structural resolution after reopening. This does not establish Shipment Manifest Count semantics."
+
+[package_type]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "cci"
+type = "autocomplete"
+scope = "selected CCI / Invoice Details"
+candidate = { label = "Count", label_type = "Text", control_type = "Edit", relation = "nested_packaging_edit_in_count_container" }
+readback = "nonempty_observed"
+confirmed_codes = { CT = "cartons" }
+notes = "User confirms CT means cartons. This is the nested code Edit beside the quantity, not the quantity Edit. Code selection/autocomplete behavior and other codes remain untested."
+
+[gross_weight]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "header"
+type = "decimal"
+candidate = { label = "Weight", label_type = "Text", control_type = "Edit", relation = "same_row_right_in_field_container" }
+readback = "nonempty_observed"
+notes = "Confirm gross versus net and the displayed unit before writing. Do not silently assume kg."
+
+[vessel_voyage]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "header"
+type = "compound"
+readback = "nonempty_observed"
+notes = "Schema currently supplies one scalar; require separate verified vessel/voyage values before writing. Do not split on arbitrary spaces or slashes."
+targets = [
+  { part = "vessel", title = "Vessel", control_type = "Edit" },
+  { part = "voyage", title = "Voyage Number", control_type = "Edit" },
+]
+
+[container]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "header"
+type = "text"
+locator = { title = "Containers", control_type = "Edit" }
+readback = "nonempty_observed"
+notes = "Confirm multiple-container delimiter and capacity before enabling."
+
+[invoice_number]
+strategy = "unresolved"
+status = "blocked_mapping"
+type = "text"
+notes = "Invoice screen exposes Reference, but its equivalence to invoice_number is not verified. Do not map by guess."
+
+[invoice_date]
+strategy = "unresolved"
+status = "blocked_mapping"
+type = "date"
+notes = "No invoice-date control identified. Do not substitute Direct Shipment Date or ETA Date."
+
+[vendor]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "header"
+type = "party"
+locator = { title = "Vendor", control_type = "Edit" }
+readback = "nonempty_observed"
+notes = "Observed multiline party/address display. Confirm editability and lookup selection; do not overwrite it as free text without validation."
+
+[purchaser]
+strategy = "tier1"
+status = "observed_candidate"
+screen = "cci"
+type = "party"
+locator = { title = "Purchaser", control_type = "Edit" }
+scope = "selected CCI / Parties"
+readback = "empty_observed"
+notes = "Independent named Purchaser control observed. Require unique match in the selected CCI; lookup behavior remains untested. Do not substitute Consignee."
+
+[currency]
+strategy = "tier1"
+status = "structural_candidate"
+screen = "cci"
+type = "autocomplete"
+scope = "selected CCI / Invoice Details"
+candidate = { label = "Currency", label_type = "Text", control_type = "Edit", relation = "edit_in_container_following_label" }
+readback = "code_not_exposed_in_scan"
+notes = "CCI scan exposes an unnamed Edit beside Currency, unlike the earlier invoice-page candidate. Do not use the adjacent exchange-rate text as currency code. Verify code readback and lookup selection before enabling writes."
+
+[incoterms]
+strategy = "unresolved"
+status = "blocked_mapping"
+type = "autocomplete"
+notes = "No verified Incoterms target. Freight amount/payment terms do not establish an Incoterms mapping."
