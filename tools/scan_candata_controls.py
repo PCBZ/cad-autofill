@@ -556,11 +556,14 @@ def walk_controls(
     on a screen with a data grid), this reads one control at a time. It stops at
     `max_controls` controls or after `time_limit` seconds, and every row is passed to
     `on_row` as soon as it is read, so a stopped or interrupted scan keeps what it has.
-    Returns "" when every control was read, otherwise why the walk stopped.
+    Returns "" when every control was read, otherwise why the walk stopped (including
+    when a control's children could not be enumerated, since that subtree may hold
+    unread controls).
     """
     deadline = clock() + time_limit
     stack = [(child, 1) for child in reversed(root.children())]
     count = 0
+    unreadable_children = 0
     while stack:
         if count >= max_controls:
             return f"control limit {max_controls}"
@@ -572,10 +575,21 @@ def walk_controls(
         count += 1
         if progress and count % PROGRESS_EVERY == 0:
             progress(count)
+        if count >= max_controls:
+            # Stop now: do not spend time enumerating this control's children, and
+            # do not claim completion, since whether it had more is now unknown.
+            return f"control limit {max_controls}"
         if row.kind == "grid" and not descend_grids:
             continue  # a data grid can hold thousands of cells
         if depth < max_depth:
-            stack.extend((c, depth + 1) for c in reversed(safe(ctrl.children, [])))
+            try:
+                children = ctrl.children()
+            except Exception:
+                children = []
+                unreadable_children += 1
+            stack.extend((c, depth + 1) for c in reversed(children))
+    if unreadable_children:
+        return f"{unreadable_children} control(s) had unreadable children"
     return ""
 
 
@@ -864,6 +878,8 @@ def parse_args(argv=None):
     args = p.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.screen):
         p.error("--screen may contain only letters, digits, '_', '-' and '.'")
+    if args.tree and args.mask_values:
+        p.error("--tree dumps field values unmasked; it cannot be combined with --mask-values")
     return args
 
 

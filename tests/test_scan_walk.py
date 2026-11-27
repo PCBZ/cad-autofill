@@ -62,9 +62,12 @@ class WalkTests(unittest.TestCase):
         self.assertEqual(names, ["a", "a1", "a2"])
         self.assertEqual(stopped, "control limit 3")
 
-    def test_limit_equal_to_the_size_is_not_a_stop(self):
+    def test_limit_equal_to_the_size_still_reports_the_limit(self):
+        # Reading the last allowed control does not prove there was nothing after it
+        # (its own children are never enumerated), so this is not reported as "read
+        # everything".
         names, stopped = walk(tree(), max_controls=5)
-        self.assertEqual((len(names), stopped), (5, ""))
+        self.assertEqual((len(names), stopped), (5, "control limit 5"))
 
     def test_stops_at_the_time_limit(self):
         ticks = iter(range(0, 1000))  # the fake clock advances 1 s per check
@@ -109,12 +112,12 @@ class WalkTests(unittest.TestCase):
             )
         self.assertEqual([r.name for r in seen], ["a", "a1", "a2"])
 
-    def test_a_control_whose_children_cannot_be_listed_is_skipped(self):
+    def test_a_control_whose_children_cannot_be_listed_is_reported_as_incomplete(self):
         broken = Ctrl("broken")
         broken.children = lambda: (_ for _ in ()).throw(RuntimeError("COM error"))
         names, stopped = walk(Ctrl("root", children=[broken, Ctrl("next")]))
-        self.assertEqual(names, ["broken", "next"])
-        self.assertEqual(stopped, "")
+        self.assertEqual(names, ["broken", "next"])  # siblings are still read
+        self.assertEqual(stopped, "1 control(s) had unreadable children")
 
     def test_progress_is_reported_every_few_controls(self):
         counts = []
@@ -147,6 +150,11 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(args.backend, "both")
         self.assertTrue(args.tree and args.grids)
         self.assertEqual((args.max_controls, args.time_limit), (5000, 600))
+
+    def test_tree_and_mask_values_together_is_rejected(self):
+        # --tree dumps the full control tree unmasked, which would defeat --mask-values.
+        with self.assertRaises(SystemExit):
+            scan.parse_args(["--tree", "--mask-values"])
 
 
 if __name__ == "__main__":
