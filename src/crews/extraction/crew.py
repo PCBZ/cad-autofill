@@ -3,14 +3,15 @@
     documents -> which PDF is which (code) -> bl, ci, ci_lines, emf tasks (async)
               -> reconciler (bl, ci, emf) -> build_shipment (code) -> Shipment
 
-Agent and task text is in config/agents.yaml and config/tasks.yaml (the
-CrewAI convention; settings stay in settings.toml) next to this file;
-the model is [models] extraction in settings.toml. `make_extractor(settings)` gives the
-function ShipmentFlow calls in its extract step.
+Agent and task text is in config/agents.yaml and config/tasks.yaml next to this file (the
+CrewAI convention). Settings are TOML: the title phrases that tell the PDFs apart are in
+config/documents.toml, and the model is [models] extraction in settings.toml.
+`make_extractor(settings)` gives the function ShipmentFlow calls in its extract step.
 
 The crew sees the document text only. It has no tools, no memory and no delegation.
 """
 
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -75,15 +76,22 @@ task_output_storage_handler.KickoffTaskOutputsSQLiteStorage = _NoTaskOutputStora
 
 
 def load_config(name: str) -> dict:
+    """agents.yaml or tasks.yaml: CrewAI agent and task text."""
     with (CONFIG_DIR / name).open(encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def document_phrases() -> dict[str, list[str]]:
+    """The title phrases per document type, from documents.toml (a setting, so TOML)."""
+    with (CONFIG_DIR / "documents.toml").open("rb") as f:
+        return {kind: table["phrases"] for kind, table in tomllib.load(f).items()}
 
 
 # --- which PDF is which ---------------------------------------------------------------
 
 
 def identify(documents: list[PdfText], phrases: dict[str, list[str]]) -> dict[str, PdfText]:
-    """Map bl/ci/emf to a PDF by the title phrases on its first page (documents.yaml)."""
+    """Map bl/ci/emf to a PDF by the title phrases on its first page (documents.toml)."""
     if len(documents) != len(DOCUMENTS):
         raise ExtractionError(
             f"expected 3 PDFs (B/L, commercial invoice, eManifest), found {len(documents)}: "
@@ -112,7 +120,7 @@ def identify(documents: list[PdfText], phrases: dict[str, list[str]]) -> dict[st
             "cannot tell which PDF is the B/L, the commercial invoice and the eManifest ("
             + "; ".join(problems)
             + "); a person needs to check, or add the title to "
-            + "src/crews/extraction/config/documents.yaml"
+            + "src/crews/extraction/config/documents.toml"
         )
     return by_kind
 
@@ -194,9 +202,7 @@ def build_crew(
 def extract_shipment(
     documents: list[PdfText], settings: dict, *, llm: BaseLLM | None = None
 ) -> Shipment:
-    by_kind = identify(
-        documents, {k: v["phrases"] for k, v in load_config("documents.yaml").items()}
-    )
+    by_kind = identify(documents, document_phrases())
     model = llm or LLM(model=settings["models"]["extraction"], temperature=0)
     crew, tasks = build_crew(by_kind, model, settings["crews"]["guardrail_max_retries"])
     try:

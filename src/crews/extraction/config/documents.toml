@@ -3,28 +3,17 @@
 # (case does not matter), and each PDF gets the type with the most matches. If that does
 # not give exactly one PDF of each type, the run stops for a person.
 #
+# This is a setting read by our code, not a CrewAI prompt, so it is TOML like the other
+# settings; agents.yaml and tasks.yaml next to it are YAML because CrewAI expects that.
+#
 # A stopgap until Jev identifies document types (issue #18). Add the titles your clients'
 # documents use.
 
-bl:
-  phrases:
-  - bill of lading
-  - sea waybill
-  - air waybill
-  - waybill
-  - b/l no
+[bl]
+phrases = ["bill of lading", "sea waybill", "air waybill", "waybill", "b/l no"]
 
-ci:
-  phrases:
-  - commercial invoice
-  - invoice no
-  - invoice number
-  - invoice date
+[ci]
+phrases = ["commercial invoice", "invoice no", "invoice number", "invoice date"]
 
-emf:
-  phrases:
-  - emanifest
-  - e-manifest
-  - cargo control
-  - ccn
-  - manifest
+[emf]
+phrases = ["emanifest", "e-manifest", "cargo control", "ccn", "manifest"]

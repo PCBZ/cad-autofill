@@ -150,9 +150,9 @@ def fake_llm(**overrides) -> "FakeLLM":
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")
 class IdentifyTests(unittest.TestCase):
     def phrases(self):
-        from src.crews.extraction.crew import load_config
+        from src.crews.extraction.crew import document_phrases
 
-        return {k: v["phrases"] for k, v in load_config("documents.yaml").items()}
+        return document_phrases()
 
     def test_each_pdf_gets_its_type(self):
         from src.crews.extraction.crew import identify
@@ -461,6 +461,18 @@ class ConfigTests(unittest.TestCase):
         for name in ("bl", "ci", "ci_lines", "emf"):
             self.assertIn("{document}", tasks[name]["description"])
             self.assertIn("{rules}", tasks[name]["description"])
+
+    def test_every_document_type_has_title_phrases(self):
+        import tomllib
+
+        path = HERE.parent / "src" / "crews" / "extraction" / "config" / "documents.toml"
+        with path.open("rb") as f:
+            documents = tomllib.load(f)
+        self.assertEqual(set(documents), {"bl", "ci", "emf"})
+        for kind, table in documents.items():
+            self.assertEqual(set(table), {"phrases"}, kind)
+            self.assertTrue(table["phrases"], kind)
+            self.assertTrue(all(isinstance(p, str) and p for p in table["phrases"]), kind)
 
 
 if __name__ == "__main__":
