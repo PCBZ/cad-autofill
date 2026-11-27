@@ -8,7 +8,6 @@ calling a model.
 import importlib.util
 import json
 import sys
-import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -153,7 +152,7 @@ class IdentifyTests(unittest.TestCase):
     def phrases(self):
         from src.crews.extraction.crew import load_config
 
-        return {k: v["phrases"] for k, v in load_config("documents.toml").items()}
+        return {k: v["phrases"] for k, v in load_config("documents.yaml").items()}
 
     def test_each_pdf_gets_its_type(self):
         from src.crews.extraction.crew import identify
@@ -417,9 +416,11 @@ class CrewRunTests(unittest.TestCase):
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")
 class ConfigTests(unittest.TestCase):
     def test_every_agent_and_task_has_its_text(self):
+        import yaml
+
         config = HERE.parent / "src" / "crews" / "extraction" / "config"
-        agents = tomllib.loads((config / "agents.toml").read_text())
-        tasks = tomllib.loads((config / "tasks.toml").read_text())
+        agents = yaml.safe_load((config / "agents.yaml").read_text(encoding="utf-8"))
+        tasks = yaml.safe_load((config / "tasks.yaml").read_text(encoding="utf-8"))
         for name in ("bl", "ci", "emf", "reconciler"):
             self.assertEqual(set(agents[name]), {"role", "goal", "backstory"}, name)
             self.assertEqual(set(tasks[name]), {"description", "expected_output"}, name)

@@ -6,11 +6,25 @@
 # A stopgap until Jev identifies document types (issue #18). Add the titles your clients'
 # documents use.
 
-[bl]
-phrases = ["bill of lading", "sea waybill", "air waybill", "waybill", "b/l no"]
+bl:
+  phrases:
+  - bill of lading
+  - sea waybill
+  - air waybill
+  - waybill
+  - b/l no
 
-[ci]
-phrases = ["commercial invoice", "invoice no", "invoice number", "invoice date"]
+ci:
+  phrases:
+  - commercial invoice
+  - invoice no
+  - invoice number
+  - invoice date
 
-[emf]
-phrases = ["emanifest", "e-manifest", "cargo control", "ccn", "manifest"]
+emf:
+  phrases:
+  - emanifest
+  - e-manifest
+  - cargo control
+  - ccn
+  - manifest
