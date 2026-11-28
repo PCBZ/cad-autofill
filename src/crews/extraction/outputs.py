@@ -1,4 +1,4 @@
-"""What each extraction task returns (`output_pydantic`).
+"""What each extraction task returns (`output_pydantic`): the answer formats, not a database.
 
 The specialists report what one document says, field by field, with the page. The
 reconciler only picks a value for the fields that several documents give. Code then

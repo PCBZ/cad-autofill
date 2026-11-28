@@ -3,7 +3,7 @@
 # PDF (in code, with str.replace: document text may contain braces).
 #
 # description: what to read and how. expected_output: exactly what the answer contains.
-# The JSON shape itself comes from the task's output model (models.py).
+# The JSON shape itself comes from the task's output model (outputs.py).
 
 shared:
   rules: |-

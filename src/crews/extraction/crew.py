@@ -23,7 +23,7 @@ from opentelemetry import trace
 from pydantic import BaseModel
 
 from src.crews.extraction import guardrails
-from src.crews.extraction.models import (
+from src.crews.extraction.outputs import (
     SHARED_FIELDS,
     BLReading,
     CILines,

@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from src.crews.extraction.models import (
+from src.crews.extraction.outputs import (
     SHARED_FIELDS,
     BLReading,
     CILines,

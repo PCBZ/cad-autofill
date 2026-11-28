@@ -213,20 +213,20 @@ class GuardrailTests(unittest.TestCase):
 
     def ci_problems(self, **changes):
         from src.crews.extraction.guardrails import check_ci
-        from src.crews.extraction.models import CIReading
+        from src.crews.extraction.outputs import CIReading
 
         return check_ci(CIReading.model_validate({**CI, **changes}), 2)
 
     def test_good_answer_passes_as_the_model(self):
         from src.crews.extraction.guardrails import check_ci
-        from src.crews.extraction.models import CIReading
+        from src.crews.extraction.outputs import CIReading
 
         ok, result = self.run_guardrail(CIReading, lambda m: check_ci(m, 2), CI)
         self.assertTrue(ok)
         self.assertIsInstance(result, CIReading)
 
     def test_json_in_a_code_fence_passes(self):
-        from src.crews.extraction.models import EMFReading
+        from src.crews.extraction.outputs import EMFReading
 
         ok, _ = self.run_guardrail(
             EMFReading, lambda m: [], "```json\n" + json.dumps(EMF) + "\n```"
@@ -234,7 +234,7 @@ class GuardrailTests(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_not_json_or_unknown_field_fails(self):
-        from src.crews.extraction.models import BLReading
+        from src.crews.extraction.outputs import BLReading
 
         for raw in ("Here are the fields: ...", json.dumps({**BL, "notify": r("x")})):
             ok, reason = self.run_guardrail(BLReading, lambda m: [], raw)
@@ -243,7 +243,7 @@ class GuardrailTests(unittest.TestCase):
 
     def test_check_failures_are_listed_for_the_retry(self):
         from src.crews.extraction.guardrails import check_bl
-        from src.crews.extraction.models import BLReading
+        from src.crews.extraction.outputs import BLReading
 
         ok, reason = self.run_guardrail(
             BLReading,
@@ -262,7 +262,7 @@ class GuardrailTests(unittest.TestCase):
 
     def test_ci_lines_formats(self):
         from src.crews.extraction.guardrails import check_ci_lines
-        from src.crews.extraction.models import CILines
+        from src.crews.extraction.outputs import CILines
 
         def problems(lines):
             return check_ci_lines(CILines(lines=lines), 2)
@@ -278,7 +278,7 @@ class GuardrailTests(unittest.TestCase):
 
     def test_eta_may_have_a_time(self):
         from src.crews.extraction.guardrails import check_date
-        from src.crews.extraction.models import Reading
+        from src.crews.extraction.outputs import Reading
 
         self.assertEqual(
             check_date("eta", Reading(value="2026-11-30T08:00"), time_allowed=True), []
@@ -288,7 +288,7 @@ class GuardrailTests(unittest.TestCase):
 
     def test_reconciler_must_pick_a_document_that_gave_the_field(self):
         from src.crews.extraction.guardrails import check_reconciled
-        from src.crews.extraction.models import BLReading, CIReading, EMFReading, Reconciled
+        from src.crews.extraction.outputs import BLReading, CIReading, EMFReading, Reconciled
 
         readings = {
             "bl": BLReading.model_validate(BL),
@@ -313,7 +313,7 @@ class GuardrailTests(unittest.TestCase):
 class BuildShipmentTests(unittest.TestCase):
     def build(self, rec=RECONCILED, **changes):
         from src.crews.extraction.crew import build_shipment
-        from src.crews.extraction.models import (
+        from src.crews.extraction.outputs import (
             BLReading,
             CILines,
             CIReading,
