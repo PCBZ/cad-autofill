@@ -41,3 +41,10 @@ output = "output"
 [timeouts]
 control_wait_seconds = 10  # RPA: wait for a control to appear
 import_wait_seconds = 60   # RPA: wait for the Excel import to finish
+
+[rpa]
+single_instance_lock_name = "Global\\CadAutofillFill"  # only one fill runs at a time
+# Window titles a fill run expects to see; anything else is an unknown popup
+# (screenshot, then stop). Later RPA issues add their own dialogs here, e.g.
+# the Excel file picker for #22.
+expected_windows = ["Candata"]
