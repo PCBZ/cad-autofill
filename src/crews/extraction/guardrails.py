@@ -55,11 +55,17 @@ def _readings(model: BaseModel) -> dict[str, Reading]:
 
 
 def check_pages(model: BaseModel, pages: int) -> list[str]:
-    return [
-        f"{name}: page {reading.page}, but the document has {pages} page(s)"
-        for name, reading in _readings(model).items()
-        if reading.value != "" and reading.page is not None and reading.page > pages
+    """Every value needs the page it is on, and the page must exist. "" needs no page."""
+    given = {name: r for name, r in _readings(model).items() if r.value != ""}
+    no_page = [
+        f"{name}: give the page this value is on" for name, r in given.items() if r.page is None
     ]
+    past_the_end = [
+        f"{name}: page {r.page}, but the document has {pages} page(s)"
+        for name, r in given.items()
+        if r.page is not None and r.page > pages
+    ]
+    return no_page + past_the_end
 
 
 def check_date(name: str, reading: Reading, *, time_allowed: bool = False) -> list[str]:
@@ -148,7 +154,7 @@ def check_emf(emf: EMFReading, pages: int) -> list[str]:
 
 
 def check_reconciled(rec: Reconciled, readings: dict[str, BaseModel]) -> list[str]:
-    """A pick must come from a document that gave the field."""
+    """A pick must come from a document that gave the field, with that document's value."""
     picks = dict(rec)
     fields = {kind: dict(reading) for kind, reading in readings.items()}
     chosen = {name: picks[name] for name in SHARED_FIELDS if picks[name] is not None}
@@ -162,4 +168,11 @@ def check_reconciled(rec: Reconciled, readings: dict[str, BaseModel]) -> list[st
         for name, choice in chosen.items()
         if choice.source in SHARED_FIELDS[name] and fields[choice.source][name].value == ""
     ]
-    return wrong_document + no_value
+    changed_value = [
+        f"{name}: {choice.source} says {fields[choice.source][name].value!r}, not "
+        f"{choice.value!r}; copy the value from the document you pick"
+        for name, choice in chosen.items()
+        if choice.source in SHARED_FIELDS[name]
+        and fields[choice.source][name].value not in ("", choice.value)
+    ]
+    return wrong_document + no_value + changed_value

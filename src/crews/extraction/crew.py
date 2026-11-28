@@ -231,14 +231,13 @@ def build_shipment(
         given = {doc: fields[doc][name] for doc in documents if fields[doc][name].value != ""}
         choice = picks[name]
         if choice is not None and choice.source in given:
-            source, value = choice.source, choice.value
+            source = choice.source  # only the document: the value is that document's reading
         elif given:
             source = next(iter(given))  # SHARED_FIELDS order: the B/L first
-            value = given[source].value
         else:
-            source, value = documents[0], ""
+            source = documents[0]
         header[name] = HeaderField(
-            value=value,
+            value=given[source].value if source in given else "",
             source=source,
             found={doc: r.value for doc, r in given.items()},
             page=given[source].page if source in given else None,

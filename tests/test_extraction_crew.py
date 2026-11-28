@@ -280,6 +280,10 @@ class GuardrailTests(unittest.TestCase):
     def test_page_past_the_end_fails(self):
         self.assertIn("page 5", self.ci_problems(invoice_number=r("INV-1", 5))[0])
 
+    def test_a_value_needs_its_page(self):
+        self.assertIn("give the page", self.ci_problems(invoice_number=r("INV-1", None))[0])
+        self.assertEqual(self.ci_problems(bl_number=r("", None)), [])  # "" needs no page
+
     def test_eta_may_have_a_time(self):
         from src.crews.extraction.guardrails import check_date
         from src.crews.extraction.outputs import Reading
@@ -311,6 +315,22 @@ class GuardrailTests(unittest.TestCase):
         problems = check_reconciled(bad, readings)
         self.assertEqual(len(problems), 2)
         self.assertIn("consignee: emf does not give this field", problems)
+
+    def test_reconciler_must_copy_the_value_of_the_document_it_picks(self):
+        from src.crews.extraction.guardrails import check_reconciled
+        from src.crews.extraction.outputs import BLReading, CIReading, EMFReading, Reconciled
+
+        readings = {
+            "bl": BLReading.model_validate(BL),
+            "ci": CIReading.model_validate(CI),
+            "emf": EMFReading.model_validate(EMF),
+        }
+        made_up = Reconciled.model_validate(
+            {**RECONCILED, "packages": {"value": 999, "source": "bl"}}
+        )
+        problems = check_reconciled(made_up, readings)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("packages: bl says 20, not 999", problems[0])
 
 
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")
@@ -359,6 +379,11 @@ class BuildShipmentTests(unittest.TestCase):
         header = self.build(rec, bl={**BL, "packages": r("")}).header
         self.assertEqual(header.bl_number.source, "bl")
         self.assertEqual((header.packages.value, header.packages.source), (20, "emf"))
+
+    def test_value_comes_from_the_picked_document_not_the_reconciler(self):
+        rec = {**RECONCILED, "packages": {"value": 999, "source": "bl"}}
+        packages = self.build(rec).header.packages
+        self.assertEqual((packages.value, packages.source, packages.page), (20, "bl", 1))
 
     def test_pick_from_a_document_without_a_reading_is_ignored(self):
         rec = {**RECONCILED, "packages": {"value": 99, "source": "emf"}}
