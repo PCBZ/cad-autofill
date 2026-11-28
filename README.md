@@ -170,7 +170,7 @@ interpreter; without activating, use `.venv/bin/python` or
 | Command | What it does | Status |
 | --- | --- | --- |
 | `python main.py fetch` | Gmail label → `inbox/<shipment>/` | Not implemented yet (#33) |
-| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import csv. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Partly: reads the PDFs and runs the Flow, stops at the extraction crew (#9). Corrections (#36) and csv (#11) not yet |
+| `python main.py extract inbox/<shipment>` | PDFs → JSON, validation report, import csv. After a validation failure, fill in `output/<shipment>/corrections.toml` and run it again to continue | Partly: reads the PDFs, runs the extraction crew (needs `OPENROUTER_API_KEY`) and validates. Corrections (#36) and csv (#11) not yet |
 | `python main.py fill inbox/<shipment>` | Fill Candata, import lines, stop before submit | Not implemented yet (#28) |
 
 `main.py` forces these CrewAI switches even if `.env` says otherwise, and removes

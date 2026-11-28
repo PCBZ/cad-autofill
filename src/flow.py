@@ -5,7 +5,7 @@
     load (corrections.toml found) -> apply_corrections -> validate -> ...
 
 Only extraction needs a model, so it is the one step passed in from outside
-(`extractor`); tests and the real extraction crew (issue #9) plug in there. The other
+(`extractor`): the extraction crew (src/crews/extraction) in main.py, a fake in tests. The other
 steps are code. Steps that belong to later issues are stubs that say so:
 apply_corrections and the full review files (#36), classify (#18, #19), write_csv (#11).
 
@@ -18,22 +18,25 @@ from pathlib import Path
 from crewai.flow.flow import Flow, listen, or_, router, start
 from opentelemetry.trace import Span
 
-from src.telemetry import RunTrace
-from src.schema import Email, Shipment, ShipmentState
-from src.text.pdf_text import PdfReadError, PdfText, read_pdf
 from src import validator
+from src.schema import Email, Shipment, ShipmentState
+from src.telemetry import RunTrace
+from src.text.pdf_text import PdfReadError, PdfText, read_pdf
 
 OUTCOME_DONE = "done"
 OUTCOME_NO_PDFS = "no_pdfs"
 OUTCOME_UNREADABLE = "unreadable"
 OUTCOME_SCANNED = "scanned"
 OUTCOME_NEEDS_REVIEW = "needs_review"
+OUTCOME_EXTRACTION_FAILED = "extraction_failed"
 
 Extractor = Callable[[list[PdfText]], Shipment]
 
 
-def crew_not_ready(documents: list[PdfText]) -> Shipment:
-    raise NotImplementedError("the extraction crew is not implemented yet (see issue #9)")
+class ExtractionError(Exception):
+    """An extractor could not produce a shipment from these documents (which PDF is
+    which is unclear, or the model's answers kept failing the format checks). The run
+    stops for a person; other errors, such as a network failure, are not caught."""
 
 
 class ShipmentFlow(Flow[ShipmentState]):
@@ -43,7 +46,7 @@ class ShipmentFlow(Flow[ShipmentState]):
         shipment_dir: Path,
         output_dir: Path,
         settings: dict,
-        extractor: Extractor = crew_not_ready,
+        extractor: Extractor,
     ):
         super().__init__(suppress_flow_events=True)
         self.shipment_dir = shipment_dir
@@ -117,7 +120,11 @@ class ShipmentFlow(Flow[ShipmentState]):
     @listen("fresh")
     def extract(self) -> None:
         with self.trace.step("extract") as span:
-            shipment = self.extractor(self.documents)
+            try:
+                shipment = self.extractor(self.documents)
+            except ExtractionError as e:
+                span.set_attribute("failed", type(e).__name__)
+                return self._stop(OUTCOME_EXTRACTION_FAILED, str(e))
             if shipment.email is None:
                 shipment.email = self.email
             self.state.shipment = shipment
@@ -133,6 +140,8 @@ class ShipmentFlow(Flow[ShipmentState]):
 
     @router(or_(extract, apply_corrections))
     def validate(self) -> str:
+        if self.state.outcome:  # extract stopped
+            return "stopped"
         with self.trace.step("validate") as span:
             tolerance = self.settings["validation"]["amount_tolerance"]
             result = validator.validate(self.state.shipment, amount_tolerance=tolerance)
@@ -198,7 +207,7 @@ def _report(name: str, shipment: Shipment) -> str:
 
 
 def run_extract(
-    settings: dict, shipment_dir: Path, output_dir: Path, *, extractor: Extractor = crew_not_ready
+    settings: dict, shipment_dir: Path, output_dir: Path, *, extractor: Extractor
 ) -> ShipmentState:
     """Run the extract command for one shipment folder and return the final state."""
     flow = ShipmentFlow(

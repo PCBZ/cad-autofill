@@ -6,9 +6,11 @@ import importlib.util
 import io
 import json
 import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -24,6 +26,8 @@ HAVE_CREWAI = importlib.util.find_spec("crewai") is not None
 SETTINGS = {
     "text": {"min_chars_per_page": 50},
     "validation": {"amount_tolerance": 0.01},
+    "models": {"extraction": "openrouter/anthropic/claude-haiku-5.5"},
+    "crews": {"guardrail_max_retries": 1},
 }
 EMAIL = {
     "message_id": "18c2f0a9d3e4b5c6",
@@ -149,12 +153,18 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(state.outcome, OUTCOME_DONE)
         self.assertIsNone(state.shipment.email)
 
-    def test_default_extractor_says_it_is_not_implemented(self):
-        from src.flow import run_extract
+    def test_extraction_error_stops_for_a_person(self):
+        from src.flow import OUTCOME_EXTRACTION_FAILED, ExtractionError
+
+        def extractor(documents):
+            raise ExtractionError("cannot tell which PDF is the B/L")
 
         self.add_pdfs()
-        with self.assertRaisesRegex(NotImplementedError, "#9"):
-            run_extract(SETTINGS, self.shipment_dir, self.output_dir)
+        state = self.run_flow(extractor)
+        self.assertEqual(state.outcome, OUTCOME_EXTRACTION_FAILED)
+        self.assertEqual(state.messages, ["cannot tell which PDF is the B/L"])
+        self.assertIsNone(state.shipment)
+        self.assertNotIn("validate", [s["name"] for s in self.spans()])
 
     def test_corrections_file_resumes_without_the_extractor(self):
         self.add_pdfs()
@@ -205,15 +215,17 @@ class FlowTests(unittest.TestCase):
         self.assertNotIn("Shenzhen", text)
 
     def test_trace_marks_a_failed_step_without_the_message(self):
-        from src.flow import run_extract
+        def extractor(documents):
+            raise RuntimeError("connection reset while sending INV-2026")
 
         self.add_pdfs()
-        with self.assertRaises(NotImplementedError):
-            run_extract(SETTINGS, self.shipment_dir, self.output_dir)
+        with self.assertRaises(RuntimeError):
+            self.run_flow(extractor)
         spans = {s["name"]: s for s in self.spans()}
         self.assertEqual(spans["load"]["status"]["status_code"], "UNSET")
         self.assertEqual(spans["extract"]["status"]["status_code"], "ERROR")
-        self.assertEqual(spans["extract"]["status"]["description"], "NotImplementedError")
+        self.assertEqual(spans["extract"]["status"]["description"], "RuntimeError")
+        self.assertNotIn("INV-2026", (self.output_dir / "trace.jsonl").read_text())
         self.assertEqual(spans["extract"]["events"], [])  # no exception text recorded
         self.assertEqual(spans["run"]["status"]["status_code"], "ERROR")
 
@@ -230,21 +242,26 @@ class MainExtractTests(unittest.TestCase):
         self.shipment_dir.mkdir(parents=True)
         self.settings = {**SETTINGS, "paths": {"output": str(self.root / "output")}}
 
-    def run_main(self) -> tuple[int, str, str]:
+    def run_main(self, *, key_missing: bool = False) -> tuple[int, str, str]:
         import main
 
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        # No .env and no real key: the flow stops before any model call in these tests.
+        with (
+            mock.patch.object(main, "load_env", lambda: None),
+            mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key-not-used"}),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            if key_missing:
+                del os.environ["OPENROUTER_API_KEY"]
             code = main.extract(self.settings, self.shipment_dir)
         return code, out.getvalue(), err.getvalue()
 
-    def test_extraction_crew_not_ready_exits_3(self):
-        doc = pymupdf.open()
-        add_text_page(doc, INVOICE_LINES)
-        doc.save(self.shipment_dir / "ci.pdf")
-        code, _, err = self.run_main()
-        self.assertEqual(code, 3)
-        self.assertIn("#9", err)
+    def test_missing_openrouter_key_exits_1(self):
+        code, _, err = self.run_main(key_missing=True)
+        self.assertEqual(code, 1)
+        self.assertIn("OPENROUTER_API_KEY", err)
 
     def test_scanned_pdf_exits_4(self):
         source = pymupdf.open()

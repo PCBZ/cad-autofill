@@ -12,6 +12,7 @@ pymupdf>=1.24
 
 # Orchestration and extraction: all models through OpenRouter
 crewai[litellm]==1.15.45     # Claude Haiku 5.5 / Sonnet 5.5 via OpenRouter
+pyyaml>=6.0                  # crew agents.yaml / tasks.yaml (installed with crewai anyway)
 
 # Classification
 typesafe-sdk>=0.7.5          # Jev via OpenRouter
