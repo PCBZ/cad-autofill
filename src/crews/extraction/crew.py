@@ -11,14 +11,14 @@ config/documents.toml, and the model is [models] extraction in settings.toml.
 The crew sees the document text only. It has no tools, no memory and no delegation.
 """
 
+import functools
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import yaml
 from crewai import LLM, Agent, Crew, Process, Task
 from crewai.llms.base_llm import BaseLLM
-from crewai.utilities import task_output_storage_handler
 from opentelemetry import trace
 from pydantic import BaseModel
 
@@ -38,6 +38,8 @@ from src.schema import Header, HeaderField, Shipment
 from src.text.pdf_text import PdfText
 
 CONFIG_DIR = Path(__file__).parent / "config"
+# CrewAI's own default, used when [crews] guardrail_max_retries is not set.
+DEFAULT_MAX_RETRIES: int = Task.model_fields["guardrail_max_retries"].default
 DOCUMENTS: tuple[SpecialistDocument, ...] = ("bl", "ci", "emf")
 DOCUMENT_NAMES = {"bl": "bill of lading", "ci": "commercial invoice", "emf": "eManifest"}
 # The specialist tasks: name -> (document it reads, output model, guardrail check).
@@ -48,31 +50,6 @@ SPECIALISTS: dict[str, tuple[SpecialistDocument, type[BaseModel], guardrails.Che
     "ci_lines": ("ci", CILines, guardrails.check_ci_lines),
     "emf": ("emf", EMFReading, guardrails.check_emf),
 }
-
-
-class _NoTaskOutputStorage:
-    """Stands in for CrewAI's KickoffTaskOutputsSQLiteStorage.
-
-    Without this, every crew run saves each task's output, prompt and inputs to
-    latest_kickoff_task_outputs.db in the user's application data folder, outside
-    output/ and never deleted. That file only serves Crew.replay(), which we do not use,
-    and CrewAI has no setting to turn it off.
-    """
-
-    def add(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    def update(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-    def load(self) -> list[dict[str, Any]]:
-        return []
-
-    def delete_all(self) -> None:
-        pass
-
-
-task_output_storage_handler.KickoffTaskOutputsSQLiteStorage = _NoTaskOutputStorage
 
 
 def load_config(name: str) -> dict:
@@ -97,24 +74,14 @@ def identify(documents: list[PdfText], phrases: dict[str, list[str]]) -> dict[st
             f"expected 3 PDFs (B/L, commercial invoice, eManifest), found {len(documents)}: "
             + ", ".join(Path(d.path).name for d in documents)
         )
-    found: dict[str, list[str]] = {kind: [] for kind in DOCUMENTS}
-    unknown = []
-    by_kind: dict[str, PdfText] = {}
-    for doc in documents:
-        first_page = doc.pages[0].text.casefold()
-        scores = {k: sum(first_page.count(p.casefold()) for p in phrases[k]) for k in DOCUMENTS}
-        best = max(scores.values())
-        kinds = [k for k, score in scores.items() if score == best]
-        name = Path(doc.path).name
-        if best == 0 or len(kinds) > 1:
-            unknown.append(name)
-            continue
-        found[kinds[0]].append(name)
-        by_kind[kinds[0]] = doc
-    problems = [f"cannot tell what {name} is" for name in unknown]
-    for kind, names in found.items():
-        if len(names) != 1:
-            problems.append(f"{DOCUMENT_NAMES[kind]}: {', '.join(names) or 'none'}")
+    kind_of = {Path(doc.path).name: _kind_of(doc, phrases) for doc in documents}
+    unknown = [name for name, kind in kind_of.items() if kind is None]
+    found = {kind: [name for name, k in kind_of.items() if k == kind] for kind in DOCUMENTS}
+    problems = [f"cannot tell what {name} is" for name in unknown] + [
+        f"{DOCUMENT_NAMES[kind]}: {', '.join(names) or 'none'}"
+        for kind, names in found.items()
+        if len(names) != 1
+    ]
     if problems:
         raise ExtractionError(
             "cannot tell which PDF is the B/L, the commercial invoice and the eManifest ("
@@ -122,10 +89,19 @@ def identify(documents: list[PdfText], phrases: dict[str, list[str]]) -> dict[st
             + "); a person needs to check, or add the title to "
             + "src/crews/extraction/config/documents.toml"
         )
-    return by_kind
+    return {kind_of[Path(doc.path).name]: doc for doc in documents}
 
 
-def render(doc: PdfText) -> str:
+def _kind_of(doc: PdfText, phrases: dict[str, list[str]]) -> str | None:
+    """The type whose title phrases occur most on page 1; None if no phrase or a tie."""
+    first_page = doc.pages[0].text.casefold()
+    scores = {k: sum(first_page.count(p.casefold()) for p in phrases[k]) for k in DOCUMENTS}
+    best = max(scores.values())
+    kinds = [kind for kind, score in scores.items() if score == best]
+    return kinds[0] if best > 0 and len(kinds) == 1 else None
+
+
+def prompt_text(doc: PdfText) -> str:
     """Document text for a prompt: each page's text, then its tables one row per line."""
     parts = []
     for page in doc.pages:
@@ -140,7 +116,7 @@ def render(doc: PdfText) -> str:
 
 
 def build_crew(
-    by_kind: dict[str, PdfText], llm: BaseLLM | str, max_retries: int
+    by_kind: dict[str, PdfText], llm: BaseLLM | str, max_retries: int = DEFAULT_MAX_RETRIES
 ) -> tuple[Crew, dict[str, Task]]:
     agents_text = load_config("agents.yaml")
     tasks_text = load_config("tasks.yaml")
@@ -159,7 +135,7 @@ def build_crew(
             # str.replace, not format: the document may contain braces.
             description=text["description"]
             .replace("{rules}", rules)
-            .replace("{document}", render(doc)),
+            .replace("{document}", prompt_text(doc)),
             expected_output=text["expected_output"],
             agent=agent(name),  # one agent per parallel task: CrewAI cannot share one
             output_pydantic=model,
@@ -193,9 +169,6 @@ def build_crew(
         memory=False,
         verbose=False,
     )
-    if not isinstance(crew._task_output_handler.storage, _NoTaskOutputStorage):
-        # A CrewAI upgrade moved the storage; stop rather than write prompts to disk.
-        raise RuntimeError("CrewAI's task output storage is not switched off (see crew.py)")
     return crew, tasks
 
 
@@ -204,7 +177,8 @@ def extract_shipment(
 ) -> Shipment:
     by_kind = identify(documents, document_phrases())
     model = llm or LLM(model=settings["models"]["extraction"], temperature=0)
-    crew, tasks = build_crew(by_kind, model, settings["crews"]["guardrail_max_retries"])
+    max_retries = settings.get("crews", {}).get("guardrail_max_retries", DEFAULT_MAX_RETRIES)
+    crew, tasks = build_crew(by_kind, model, max_retries)
     try:
         crew.kickoff()
     except Exception as e:
@@ -217,9 +191,9 @@ def extract_shipment(
     return build_shipment(out["bl"], out["ci"], out["ci_lines"], out["emf"], out["reconciler"])
 
 
-def make_extractor(settings: dict):
-    """The `extractor` for ShipmentFlow."""
-    return lambda documents: extract_shipment(documents, settings)
+def make_extractor(settings: dict) -> Callable[[list[PdfText]], Shipment]:
+    """The `extractor` ShipmentFlow calls with the PDFs: extract_shipment, settings filled in."""
+    return functools.partial(extract_shipment, settings=settings)
 
 
 def _record_usage(crew: Crew) -> None:
@@ -243,21 +217,19 @@ def _field(reading: Reading, source: SpecialistDocument) -> HeaderField:
 def build_shipment(
     bl: BLReading, ci: CIReading, ci_lines: CILines, emf: EMFReading, rec: Reconciled
 ) -> Shipment:
-    readings: dict[SpecialistDocument, BaseModel] = {"bl": bl, "ci": ci, "emf": emf}
-    header: dict[str, HeaderField] = {}
-    for kind, model in readings.items():
-        for name, value in model:
-            # The shared fields are filled below, from every document that gives them.
-            if (
-                isinstance(value, Reading)
-                and name in Header.model_fields
-                and name not in SHARED_FIELDS
-            ):
-                header[name] = _field(value, kind)
+    # Each reading as a plain {field name: value} dict, so fields are looked up by name.
+    fields: dict[SpecialistDocument, dict] = {"bl": dict(bl), "ci": dict(ci), "emf": dict(emf)}
+    picks = dict(rec)
+    header: dict[str, HeaderField] = {
+        # The shared fields are filled below, from every document that gives them.
+        name: _field(value, kind)
+        for kind, values in fields.items()
+        for name, value in values.items()
+        if isinstance(value, Reading) and name in Header.model_fields and name not in SHARED_FIELDS
+    }
     for name, documents in SHARED_FIELDS.items():
-        given = {doc: getattr(readings[doc], name) for doc in documents}
-        given = {doc: r for doc, r in given.items() if r.value != ""}
-        choice = getattr(rec, name)
+        given = {doc: fields[doc][name] for doc in documents if fields[doc][name].value != ""}
+        choice = picks[name]
         if choice is not None and choice.source in given:
             source, value = choice.source, choice.value
         elif given:

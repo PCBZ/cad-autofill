@@ -7,7 +7,9 @@ calling a model.
 
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -190,11 +192,11 @@ class IdentifyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")
-class RenderTests(unittest.TestCase):
+class PromptTextTests(unittest.TestCase):
     def test_pages_and_tables_are_marked(self):
-        from src.crews.extraction.crew import render
+        from src.crews.extraction.crew import prompt_text
 
-        text = render(documents()[1])
+        text = prompt_text(documents()[1])
         self.assertIn("=== page 1 ===\nCOMMERCIAL INVOICE", text)
         self.assertIn("=== page 2 ===\npage two", text)
         self.assertIn(
@@ -259,6 +261,8 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("three-letter", self.ci_problems(currency=r("US$"))[0])
         self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("20/11/2026"))[0])
         self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("20261120"))[0])
+        self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("2026-1-5"))[0])
+        self.assertIn("YYYY-MM-DD", self.ci_problems(invoice_date=r("2026-02-30"))[0])
 
     def test_ci_lines_formats(self):
         from src.crews.extraction.guardrails import check_ci_lines
@@ -376,10 +380,23 @@ class BuildShipmentTests(unittest.TestCase):
 class CrewRunTests(unittest.TestCase):
     """The real crew, with FakeLLM in place of the model."""
 
-    def extract(self, llm):
+    def setUp(self):
+        from main import CREWAI_OFF
+
+        # CrewAI saves task outputs to a SQLite file in the app data folder; keep the
+        # test runs' copy in a temporary folder instead. Telemetry, tracing and the update
+        # check off, as main.py does: no network in tests, and no first-run tracing prompt
+        # (it waits about 20 s) in a fresh storage folder.
+        storage = tempfile.TemporaryDirectory()
+        self.addCleanup(storage.cleanup)
+        env = mock.patch.dict(os.environ, {**CREWAI_OFF, "CREWAI_STORAGE_DIR": storage.name})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def extract(self, llm, settings=SETTINGS):
         from src.crews.extraction.crew import extract_shipment
 
-        return extract_shipment(documents(), SETTINGS, llm=llm)
+        return extract_shipment(documents(), settings, llm=llm)
 
     def test_shipment_from_the_four_tasks(self):
         llm = fake_llm()
@@ -436,15 +453,12 @@ class CrewRunTests(unittest.TestCase):
         with self.assertRaisesRegex(ExtractionError, "format checks"):
             self.extract(llm)
 
-    def test_task_outputs_are_not_saved_by_crewai(self):
-        from crewai.memory.storage.kickoff_task_outputs_storage import (
-            KickoffTaskOutputsSQLiteStorage,
-        )
+    def test_retries_default_to_crewais_when_settings_leave_them_out(self):
+        from src.crews.extraction.crew import DEFAULT_MAX_RETRIES
 
-        with mock.patch.object(
-            KickoffTaskOutputsSQLiteStorage, "__init__", side_effect=AssertionError("db opened")
-        ):
-            self.extract(fake_llm())
+        settings = {k: v for k, v in SETTINGS.items() if k != "crews"}
+        self.assertEqual(DEFAULT_MAX_RETRIES, 3)
+        self.assertEqual(self.extract(fake_llm(), settings).header.bl_number.value, "MAEU123456789")
 
 
 @unittest.skipUnless(HAVE_CREWAI, "needs requirements-extract.txt")
@@ -461,6 +475,19 @@ class ConfigTests(unittest.TestCase):
         for name in ("bl", "ci", "ci_lines", "emf"):
             self.assertIn("{document}", tasks[name]["description"])
             self.assertIn("{rules}", tasks[name]["description"])
+
+    def test_every_example_answer_fits_its_output_model(self):
+        import yaml
+
+        from src.crews.extraction.crew import SPECIALISTS
+        from src.crews.extraction.outputs import Reconciled
+
+        config = HERE.parent / "src" / "crews" / "extraction" / "config"
+        tasks = yaml.safe_load((config / "tasks.yaml").read_text(encoding="utf-8"))
+        models = {name: model for name, (_, model, _) in SPECIALISTS.items()}
+        for name, model in {**models, "reconciler": Reconciled}.items():
+            _, example = tasks[name]["expected_output"].split("never copy them):\n")
+            model.model_validate_json(example)  # raises if the example is out of date
 
     def test_every_document_type_has_title_phrases(self):
         import tomllib

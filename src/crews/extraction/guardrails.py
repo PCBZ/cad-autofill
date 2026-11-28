@@ -55,28 +55,34 @@ def _readings(model: BaseModel) -> dict[str, Reading]:
 
 
 def check_pages(model: BaseModel, pages: int) -> list[str]:
-    problems = []
-    for name, reading in _readings(model).items():
-        if reading.value != "" and reading.page is not None and reading.page > pages:
-            problems.append(f"{name}: page {reading.page}, but the document has {pages} page(s)")
-    return problems
+    return [
+        f"{name}: page {reading.page}, but the document has {pages} page(s)"
+        for name, reading in _readings(model).items()
+        if reading.value != "" and reading.page is not None and reading.page > pages
+    ]
 
 
 def check_date(name: str, reading: Reading, *, time_allowed: bool = False) -> list[str]:
     if reading.value == "":
         return []
     text = str(reading.value)
+    formats = ["%Y-%m-%d", "%Y-%m-%dT%H:%M"] if time_allowed else ["%Y-%m-%d"]
+    if any(_is_date(text, fmt) for fmt in formats):
+        return []
+    form = "YYYY-MM-DD or YYYY-MM-DDTHH:MM" if time_allowed else "YYYY-MM-DD"
+    return [f"{name}: {text!r} is not a date in the form {form}"]
+
+
+def _is_date(text: str, fmt: str) -> bool:
+    """True if `text` is a real date written exactly in `fmt` (zero-padded, nothing extra).
+
+    strptime alone also takes 2026-1-5; formatting the parsed date back and comparing
+    rejects that, and 20261123 and 2026-02-30 fail to parse at all.
+    """
     try:
-        if time_allowed and "T" in text:
-            dt.datetime.strptime(text, "%Y-%m-%dT%H:%M")
-        else:
-            dt.date.fromisoformat(text)
+        return dt.datetime.strptime(text, fmt).strftime(fmt) == text
     except ValueError:
-        form = "YYYY-MM-DD or YYYY-MM-DDTHH:MM" if time_allowed else "YYYY-MM-DD"
-        return [f"{name}: {text!r} is not a date in the form {form}"]
-    if len(text) < 10:  # fromisoformat also takes 20261123
-        return [f"{name}: write the date as YYYY-MM-DD"]
-    return []
+        return False
 
 
 def check_number(name: str, reading: Reading) -> list[str]:
@@ -114,20 +120,21 @@ def check_ci(ci: CIReading, pages: int) -> list[str]:
 
 
 def check_ci_lines(ci: CILines, pages: int) -> list[str]:
-    problems = []
     if not ci.lines:
-        problems.append("lines: no invoice lines; list every line of the invoice table")
+        return ["lines: no invoice lines; list every line of the invoice table"]
     numbers = [line.line_no for line in ci.lines]
-    if numbers != list(range(1, len(numbers) + 1)):
-        problems.append(f"lines: number the lines 1, 2, 3, ... in order (got {numbers})")
-    for line in ci.lines:
-        country = line.country_of_origin
-        if country and not re.fullmatch(r"[A-Z]{2}", country):
-            problems.append(
-                f"line {line.line_no}: country_of_origin {country!r} must be a two-letter "
-                'ISO code such as CN, or "" if the invoice does not give it'
-            )
-    return problems
+    numbering = (
+        [f"lines: number the lines 1, 2, 3, ... in order (got {numbers})"]
+        if numbers != list(range(1, len(numbers) + 1))
+        else []
+    )
+    countries = [
+        f"line {line.line_no}: country_of_origin {line.country_of_origin!r} must be a "
+        'two-letter ISO code such as CN, or "" if the invoice does not give it'
+        for line in ci.lines
+        if line.country_of_origin and not re.fullmatch(r"[A-Z]{2}", line.country_of_origin)
+    ]
+    return numbering + countries
 
 
 def check_emf(emf: EMFReading, pages: int) -> list[str]:
@@ -142,15 +149,17 @@ def check_emf(emf: EMFReading, pages: int) -> list[str]:
 
 def check_reconciled(rec: Reconciled, readings: dict[str, BaseModel]) -> list[str]:
     """A pick must come from a document that gave the field."""
-    problems = []
-    for name, documents in SHARED_FIELDS.items():
-        choice = getattr(rec, name)
-        if choice is None:
-            continue
-        if choice.source not in documents:
-            problems.append(f"{name}: {choice.source} does not give this field")
-            continue
-        reading = getattr(readings[choice.source], name)
-        if reading.value == "":
-            problems.append(f"{name}: you picked {choice.source}, but it does not give a value")
-    return problems
+    picks = dict(rec)
+    fields = {kind: dict(reading) for kind, reading in readings.items()}
+    chosen = {name: picks[name] for name in SHARED_FIELDS if picks[name] is not None}
+    wrong_document = [
+        f"{name}: {choice.source} does not give this field"
+        for name, choice in chosen.items()
+        if choice.source not in SHARED_FIELDS[name]
+    ]
+    no_value = [
+        f"{name}: you picked {choice.source}, but it does not give a value"
+        for name, choice in chosen.items()
+        if choice.source in SHARED_FIELDS[name] and fields[choice.source][name].value == ""
+    ]
+    return wrong_document + no_value

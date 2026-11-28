@@ -2,8 +2,9 @@
 # crewai.Task. `{rules}` is replaced by shared.rules, and `{document}` by the text of the
 # PDF (in code, with str.replace: document text may contain braces).
 #
-# description: what to read and how. expected_output: exactly what the answer contains.
-# The JSON shape itself comes from the task's output model (outputs.py).
+# description: what to read and how. expected_output: exactly what the answer contains,
+# ending with one example answer (one-shot). The JSON shape itself comes from the task's
+# output model (outputs.py); tests check that each example fits it.
 
 shared:
   rules: |-
@@ -40,6 +41,18 @@ bl:
     - container: container numbers, comma-separated.
     A field the document does not give is {"value": "", "page": null}.
 
+    Example answer (made-up values that show the form only; never copy them):
+    {"bl_number": {"value": "EXAMPLE0000001", "page": 1},
+     "shipper": {"value": "Example Shipper Co., Ltd.", "page": 1},
+     "consignee": {"value": "Example Importer Inc.", "page": 1},
+     "port_of_loading": {"value": "Example Port A", "page": 1},
+     "port_of_discharge": {"value": "Example Port B", "page": 1},
+     "packages": {"value": 12, "page": 1},
+     "package_type": {"value": "CTN", "page": 1},
+     "gross_weight": {"value": 345.6, "page": 1},
+     "vessel_voyage": {"value": "EXAMPLE VESSEL 001E", "page": 1},
+     "container": {"value": "EXMU0000001, EXMU0000002", "page": 2}}
+
 ci:
   description: |-
     Read the header of this commercial invoice and report: invoice number, invoice date,
@@ -65,6 +78,17 @@ ci:
     - bl_number, consignee: only if the invoice prints them, otherwise "".
     A field the document does not give is {"value": "", "page": null}.
 
+    Example answer (made-up values that show the form only; never copy them):
+    {"invoice_number": {"value": "EX-INV-0001", "page": 1},
+     "invoice_date": {"value": "2000-01-31", "page": 1},
+     "vendor": {"value": "Example Shipper Co., Ltd.", "page": 1},
+     "purchaser": {"value": "Example Importer Inc.", "page": 1},
+     "currency": {"value": "USD", "page": 1},
+     "incoterms": {"value": "FOB Example Port A", "page": 1},
+     "invoice_total": {"value": 1234.5, "page": 2},
+     "bl_number": {"value": "", "page": null},
+     "consignee": {"value": "Example Importer Inc.", "page": 1}}
+
 ci_lines:
   description: |-
     Copy every goods line of the invoice table in this commercial invoice, in order. A
@@ -85,6 +109,15 @@ ci_lines:
     - quantity, unit_price, amount: numbers;
     - unit: as printed (PCS, KG, SET, ...).
     The list is never empty: an invoice has at least one line.
+
+    Example answer (made-up values that show the form only; never copy them):
+    {"lines": [
+      {"line_no": 1, "description": "Example steel bolts M8", "hs_code": "0000.00.00",
+       "country_of_origin": "CN", "quantity": 100, "unit": "PCS", "unit_price": 1.5,
+       "amount": 150.0},
+      {"line_no": 2, "description": "Example plastic caps", "hs_code": "",
+       "country_of_origin": "", "quantity": 2, "unit": "SET", "unit_price": 10,
+       "amount": 20.0}]}
 
 emf:
   description: |-
@@ -108,6 +141,15 @@ emf:
     - bl_number: text; packages and gross_weight (kg): numbers.
     A field the document does not give is {"value": "", "page": null}.
 
+    Example answer (made-up values that show the form only; never copy them):
+    {"cargo_control_number": {"value": "EXMP0000000001", "page": 1},
+     "carrier_code": {"value": "EXMP", "page": 1},
+     "port_of_entry": {"value": "0000", "page": 1},
+     "eta": {"value": "2000-01-31T08:00", "page": 1},
+     "bl_number": {"value": "EXAMPLE0000001", "page": 1},
+     "packages": {"value": 12, "page": 1},
+     "gross_weight": {"value": "", "page": null}}
+
 reconciler:
   description: |-
     You have the readings of the bill of lading (bl), commercial invoice (ci) and
@@ -125,3 +167,10 @@ reconciler:
     {"value": ..., "source": "bl" | "ci" | "emf"} or null when no document gives it, and
     "notes": a list of short sentences, one per conflict (empty when the documents agree).
     The value is copied from the source document's reading, not changed.
+
+    Example answer (made-up values that show the form only; never copy them):
+    {"bl_number": {"value": "EXAMPLE0000001", "source": "bl"},
+     "consignee": {"value": "Example Importer Inc.", "source": "bl"},
+     "packages": {"value": 12, "source": "bl"},
+     "gross_weight": null,
+     "notes": ["packages: the B/L says 12, the eManifest says 13"]}
