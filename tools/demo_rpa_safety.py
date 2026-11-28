@@ -220,11 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     if others:
         print_candidates(others, "Other matching windows (use --handle to pick one):")
 
-    guard = SafetyGuard(target.pid)
-    demo_emergency_stop(guard)
-    demo_focus(guard)
+    # A fresh SafetyGuard per mechanism: StopRun is sticky by design (the first
+    # reason wins, and a real run never auto-recovers from it), so reusing one
+    # guard across these independent demos would make every check after the
+    # first stop fail with that same, stale reason.
+    demo_emergency_stop(SafetyGuard(target.pid))
+    demo_focus(SafetyGuard(target.pid))
     demo_wait_until()
-    demo_unknown_window(guard, expected_titles=[target.title or args.title])
+    demo_unknown_window(SafetyGuard(target.pid), expected_titles=[target.title or args.title])
     demo_pre_run_warning()
     demo_single_instance_lock(lock_only=False)
 
